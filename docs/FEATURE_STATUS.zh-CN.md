@@ -40,6 +40,7 @@
 - `exec` / `system` / `shell`
 - `unix-connect` / `unix-listen`（unix平台）
 - `file`
+- `named-pipe-connect`（Windows）
 
 ### 2.3 工程能力
 
@@ -67,8 +68,8 @@
 
 ### 4.1 协议与网络栈
 
-- SOCKS4 / SOCKS4A / SOCKS5（含 bind/listen 语义）
-- PROXY / HTTP CONNECT 代理
+- SOCKS4 / SOCKS4A / SOCKS5 的 bind/listen 语义
+- PROXY / HTTP CONNECT 的 bind/listen 语义
 - DTLS
 - SCTP / DCCP / UDPLITE
 - RAW IP

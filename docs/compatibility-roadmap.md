@@ -9,8 +9,8 @@ Target is complete feature coverage of upstream `socat`, while exposing simpler 
 Implemented now:
 
 - Parser:
-  - legacy subset (`STDIO`, `TCP*`, `UDP*`, `SSL/OPENSSL*`, `SOCKS4*`, `SOCKS4A*`, `SOCKS5*`, `PROXY*`, `EXEC/SYSTEM/SHELL`, `UNIX*`, `FILE/OPEN/GOPEN`)
-  - simple URI subset (`stdio://`, `tcp://`, `tcp-listen://`, `udp://`, `udp-listen://`, `tls://`, `tls-listen://`, `socks4://`, `socks4a://`, `socks5://`, `http-proxy://`, `exec://`, `system://`, `shell://`, `unix://`, `unix-listen://`, `file://`)
+  - legacy subset (`STDIO`, `TCP*`, `UDP*`, `SSL/OPENSSL*`, `SOCKS4*`, `SOCKS4A*`, `SOCKS5*`, `PROXY*`, `EXEC/SYSTEM/SHELL`, `UNIX*`, `FILE/OPEN/GOPEN`, `PIPE/NPIPE`)
+  - simple URI subset (`stdio://`, `tcp://`, `tcp-listen://`, `udp://`, `udp-listen://`, `tls://`, `tls-listen://`, `socks4://`, `socks4a://`, `socks5://`, `http-proxy://`, `exec://`, `system://`, `shell://`, `unix://`, `unix-listen://`, `file://`, `npipe://`)
 - Relay core: bidirectional async copy
 - CI: linux/macOS/windows
 
@@ -19,7 +19,7 @@ Implemented now:
 - UDP / UDP4 / UDP6 + datagram modes
 - OpenSSL/DTLS
 - SOCKS4/SOCKS4A/SOCKS5 and HTTP proxy paths
-- VSOCK and named-pipe equivalent mapping on Windows
+- VSOCK
 
 ## Phase 2: Option engine parity
 

@@ -31,12 +31,15 @@ Current implemented endpoint families:
 - `socks4a-connect`
 - `socks5-connect`
 - `http-proxy-connect`
+  - supports URI auth: `socks5://user:pass@proxy:1080?target=host:443`
+  - supports URI auth: `http-proxy://user:pass@proxy:8080?target=host:443`
 - `exec`
 - `system`
 - `shell`
 - `unix-connect` (unix only)
 - `unix-listen` (unix only)
 - `file`
+- `named-pipe-connect` (Windows, `npipe://` / `PIPE:` / `NPIPE:`)
 
 ## Why two command styles
 
@@ -52,6 +55,7 @@ socat STDIO TCP:127.0.0.1:8080
 ```bash
 socat link --from tcp-listen://0.0.0.0:8080 --to stdio://
 socat link --from stdio:// --to tcp://127.0.0.1:8080
+socat link --from npipe://./pipe/socat-rs --to tcp://127.0.0.1:9000
 ```
 
 ## AI-friendly workflow

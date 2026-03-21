@@ -20,4 +20,5 @@ pub const COMPAT_MODES: &[&str] = &[
     "unix-connect",
     "unix-listen",
     "file",
+    "named-pipe-connect",
 ];

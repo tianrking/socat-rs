@@ -4,6 +4,12 @@ use std::path::PathBuf;
 use crate::error::SocoreError;
 
 #[derive(Debug, Clone, Serialize)]
+pub struct ProxyAuth {
+    pub username: String,
+    pub password: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
 pub enum EndpointSpec {
     Stdio,
     TcpConnect(String),
@@ -12,17 +18,40 @@ pub enum EndpointSpec {
     UdpListen(String),
     TlsConnect(String),
     TlsListen(String),
-    Socks4Connect { proxy: String, target: String },
-    Socks4aConnect { proxy: String, target: String },
-    Socks5Connect { proxy: String, target: String },
-    HttpProxyConnect { proxy: String, target: String },
+    Socks4Connect {
+        proxy: String,
+        target: String,
+    },
+    Socks4aConnect {
+        proxy: String,
+        target: String,
+    },
+    Socks5Connect {
+        proxy: String,
+        target: String,
+        auth: Option<ProxyAuth>,
+    },
+    HttpProxyConnect {
+        proxy: String,
+        target: String,
+        auth: Option<ProxyAuth>,
+    },
     Exec(String),
     System(String),
     Shell(String),
     UnixConnect(PathBuf),
     UnixListen(PathBuf),
     File(PathBuf),
+    NamedPipe(String),
     Unsupported(String),
+}
+
+#[derive(Clone, Copy)]
+enum ProxyKind {
+    Socks4,
+    Socks4a,
+    Socks5,
+    HttpProxy,
 }
 
 pub fn parse_legacy(input: &str) -> Result<EndpointSpec, SocoreError> {
@@ -34,7 +63,10 @@ pub fn parse_legacy(input: &str) -> Result<EndpointSpec, SocoreError> {
         .split_once(':')
         .ok_or_else(|| SocoreError::InvalidAddress(input.to_string()))?;
     let head = head.to_ascii_uppercase();
-    let value = tail.split(',').next().unwrap_or(tail).trim().to_string();
+
+    let mut parts = tail.split(',');
+    let value = parts.next().unwrap_or(tail).trim().to_string();
+    let options: Vec<String> = parts.map(|s| s.trim().to_string()).collect();
 
     match head.as_str() {
         "TCP" | "TCP-CONNECT" | "TCP4" | "TCP4-CONNECT" | "TCP6" | "TCP6-CONNECT" => {
@@ -53,10 +85,16 @@ pub fn parse_legacy(input: &str) -> Result<EndpointSpec, SocoreError> {
             Ok(EndpointSpec::TlsConnect(value))
         }
         "SSL-LISTEN" | "SSL-L" | "OPENSSL-LISTEN" => Ok(EndpointSpec::TlsListen(value)),
-        "SOCKS4" | "SOCKS4-CONNECT" => parse_legacy_proxy4_family(&value, ProxyKind::Socks4),
-        "SOCKS4A" | "SOCKS4A-CONNECT" => parse_legacy_proxy4_family(&value, ProxyKind::Socks4a),
-        "SOCKS5" | "SOCKS5-CONNECT" => parse_legacy_proxy4(&value, true),
-        "PROXY" | "PROXY-CONNECT" => parse_legacy_proxy4(&value, false),
+        "SOCKS4" | "SOCKS4-CONNECT" => parse_legacy_proxy(value, ProxyKind::Socks4, None),
+        "SOCKS4A" | "SOCKS4A-CONNECT" => parse_legacy_proxy(value, ProxyKind::Socks4a, None),
+        "SOCKS5" | "SOCKS5-CONNECT" => {
+            parse_legacy_proxy(value, ProxyKind::Socks5, parse_legacy_proxy_auth(&options))
+        }
+        "PROXY" | "PROXY-CONNECT" => parse_legacy_proxy(
+            value,
+            ProxyKind::HttpProxy,
+            parse_legacy_proxy_auth(&options),
+        ),
         "EXEC" => Ok(EndpointSpec::Exec(value)),
         "SYSTEM" => Ok(EndpointSpec::System(value)),
         "SHELL" => Ok(EndpointSpec::Shell(value)),
@@ -65,6 +103,7 @@ pub fn parse_legacy(input: &str) -> Result<EndpointSpec, SocoreError> {
         }
         "UNIX-LISTEN" | "UNIX-L" => Ok(EndpointSpec::UnixListen(PathBuf::from(value))),
         "OPEN" | "FILE" | "GOPEN" => Ok(EndpointSpec::File(PathBuf::from(value))),
+        "NPIPE" | "PIPE" => Ok(EndpointSpec::NamedPipe(normalize_named_pipe(None, &value)?)),
         _ => Ok(EndpointSpec::Unsupported(head)),
     }
 }
@@ -118,87 +157,39 @@ pub fn parse_simple_uri(input: &str) -> Result<EndpointSpec, SocoreError> {
                 .ok_or_else(|| SocoreError::InvalidAddress(input.to_string()))?;
             Ok(EndpointSpec::TlsListen(format!("{host}:{port}")))
         }
-        "socks4" => parse_simple_proxy_uri_family(&url, ProxyKind::Socks4),
-        "socks4a" => parse_simple_proxy_uri_family(&url, ProxyKind::Socks4a),
-        "socks5" => parse_simple_proxy_uri(&url, true),
-        "http-proxy" | "proxy" => parse_simple_proxy_uri(&url, false),
+        "socks4" => parse_simple_proxy_uri(&url, ProxyKind::Socks4),
+        "socks4a" => parse_simple_proxy_uri(&url, ProxyKind::Socks4a),
+        "socks5" => parse_simple_proxy_uri(&url, ProxyKind::Socks5),
+        "http-proxy" | "proxy" => parse_simple_proxy_uri(&url, ProxyKind::HttpProxy),
         "exec" => Ok(EndpointSpec::Exec(command_from_url(&url)?)),
         "system" => Ok(EndpointSpec::System(command_from_url(&url)?)),
         "shell" => Ok(EndpointSpec::Shell(command_from_url(&url)?)),
         "unix" => Ok(EndpointSpec::UnixConnect(PathBuf::from(url.path()))),
         "unix-listen" => Ok(EndpointSpec::UnixListen(PathBuf::from(url.path()))),
         "file" => Ok(EndpointSpec::File(PathBuf::from(url.path()))),
+        "npipe" => Ok(EndpointSpec::NamedPipe(parse_simple_named_pipe(&url)?)),
         other => Ok(EndpointSpec::Unsupported(other.to_string())),
     }
 }
 
-fn parse_legacy_proxy4(value: &str, socks5: bool) -> Result<EndpointSpec, SocoreError> {
-    let parts: Vec<&str> = value.split(':').collect();
-    if parts.len() < 4 {
-        return Err(SocoreError::InvalidAddress(
-            "expected PROXY/SOCKS5 format: <proxy-host>:<proxy-port>:<target-host>:<target-port>"
-                .to_string(),
-        ));
-    }
-    let proxy = format!("{}:{}", parts[0], parts[1]);
-    let target = format!("{}:{}", parts[2], parts[3]);
-    if socks5 {
-        Ok(EndpointSpec::Socks5Connect { proxy, target })
-    } else {
-        Ok(EndpointSpec::HttpProxyConnect { proxy, target })
-    }
-}
-
-#[derive(Clone, Copy)]
-enum ProxyKind {
-    Socks4,
-    Socks4a,
-}
-
-fn parse_legacy_proxy4_family(value: &str, kind: ProxyKind) -> Result<EndpointSpec, SocoreError> {
-    let parts: Vec<&str> = value.split(':').collect();
-    if parts.len() < 4 {
-        return Err(SocoreError::InvalidAddress(
-            "expected SOCKS4/SOCKS4A format: <proxy-host>:<proxy-port>:<target-host>:<target-port>"
-                .to_string(),
-        ));
-    }
-    let proxy = format!("{}:{}", parts[0], parts[1]);
-    let target = format!("{}:{}", parts[2], parts[3]);
-    match kind {
-        ProxyKind::Socks4 => Ok(EndpointSpec::Socks4Connect { proxy, target }),
-        ProxyKind::Socks4a => Ok(EndpointSpec::Socks4aConnect { proxy, target }),
-    }
-}
-
-fn parse_simple_proxy_uri(url: &url::Url, socks5: bool) -> Result<EndpointSpec, SocoreError> {
-    let proxy_host = url
-        .host_str()
-        .ok_or_else(|| SocoreError::InvalidAddress("missing proxy host".to_string()))?;
-    let proxy_port = url
-        .port_or_known_default()
-        .ok_or_else(|| SocoreError::InvalidAddress("missing proxy port".to_string()))?;
-    let target = url
-        .query_pairs()
-        .find(|(k, _)| k == "target")
-        .map(|(_, v)| v.to_string())
-        .ok_or_else(|| {
-            SocoreError::InvalidAddress(
-                "missing target; use '?target=host:port' for proxy endpoints".to_string(),
-            )
-        })?;
-    let proxy = format!("{proxy_host}:{proxy_port}");
-    if socks5 {
-        Ok(EndpointSpec::Socks5Connect { proxy, target })
-    } else {
-        Ok(EndpointSpec::HttpProxyConnect { proxy, target })
-    }
-}
-
-fn parse_simple_proxy_uri_family(
-    url: &url::Url,
+fn parse_legacy_proxy(
+    value: String,
     kind: ProxyKind,
+    auth: Option<ProxyAuth>,
 ) -> Result<EndpointSpec, SocoreError> {
+    let parts: Vec<&str> = value.split(':').collect();
+    if parts.len() < 4 {
+        return Err(SocoreError::InvalidAddress(
+            "expected proxy format: <proxy-host>:<proxy-port>:<target-host>:<target-port>"
+                .to_string(),
+        ));
+    }
+    let proxy = format!("{}:{}", parts[0], parts[1]);
+    let target = format!("{}:{}", parts[2], parts[3]);
+    proxy_endpoint(kind, proxy, target, auth)
+}
+
+fn parse_simple_proxy_uri(url: &url::Url, kind: ProxyKind) -> Result<EndpointSpec, SocoreError> {
     let proxy_host = url
         .host_str()
         .ok_or_else(|| SocoreError::InvalidAddress("missing proxy host".to_string()))?;
@@ -215,10 +206,60 @@ fn parse_simple_proxy_uri_family(
             )
         })?;
     let proxy = format!("{proxy_host}:{proxy_port}");
+    let auth = proxy_auth_from_url(url);
+    proxy_endpoint(kind, proxy, target, auth)
+}
+
+fn proxy_endpoint(
+    kind: ProxyKind,
+    proxy: String,
+    target: String,
+    auth: Option<ProxyAuth>,
+) -> Result<EndpointSpec, SocoreError> {
     match kind {
         ProxyKind::Socks4 => Ok(EndpointSpec::Socks4Connect { proxy, target }),
         ProxyKind::Socks4a => Ok(EndpointSpec::Socks4aConnect { proxy, target }),
+        ProxyKind::Socks5 => Ok(EndpointSpec::Socks5Connect {
+            proxy,
+            target,
+            auth,
+        }),
+        ProxyKind::HttpProxy => Ok(EndpointSpec::HttpProxyConnect {
+            proxy,
+            target,
+            auth,
+        }),
     }
+}
+
+fn proxy_auth_from_url(url: &url::Url) -> Option<ProxyAuth> {
+    if url.username().is_empty() {
+        return None;
+    }
+    Some(ProxyAuth {
+        username: url.username().to_string(),
+        password: url.password().unwrap_or("").to_string(),
+    })
+}
+
+fn parse_legacy_proxy_auth(options: &[String]) -> Option<ProxyAuth> {
+    let mut user: Option<String> = None;
+    let mut pass: Option<String> = None;
+    for opt in options {
+        if let Some((k, v)) = opt.split_once('=') {
+            let key = k.trim().to_ascii_lowercase();
+            let val = v.trim().to_string();
+            match key.as_str() {
+                "socksuser" | "proxy-user" | "proxyuser" | "user" => user = Some(val),
+                "sockspass" | "proxy-pass" | "proxypass" | "pass" | "password" => pass = Some(val),
+                _ => {}
+            }
+        }
+    }
+    user.map(|u| ProxyAuth {
+        username: u,
+        password: pass.unwrap_or_default(),
+    })
 }
 
 fn command_from_url(url: &url::Url) -> Result<String, SocoreError> {
@@ -237,9 +278,40 @@ fn command_from_url(url: &url::Url) -> Result<String, SocoreError> {
     ))
 }
 
+fn parse_simple_named_pipe(url: &url::Url) -> Result<String, SocoreError> {
+    let host = url.host_str();
+    normalize_named_pipe(host, url.path())
+}
+
+fn normalize_named_pipe(host: Option<&str>, path_or_value: &str) -> Result<String, SocoreError> {
+    let raw = path_or_value.trim();
+    if raw.is_empty() {
+        return Err(SocoreError::InvalidAddress(
+            "named pipe cannot be empty".to_string(),
+        ));
+    }
+    let normalized = raw.replace('/', "\\");
+    if normalized.starts_with("\\\\.\\pipe\\") || normalized.starts_with("\\\\?\\pipe\\") {
+        return Ok(normalized);
+    }
+
+    let suffix = normalized
+        .trim_start_matches('\\')
+        .trim_start_matches("pipe\\")
+        .trim();
+    if suffix.is_empty() {
+        return Err(SocoreError::InvalidAddress(
+            "named pipe cannot be empty".to_string(),
+        ));
+    }
+
+    let host = host.filter(|h| !h.is_empty()).unwrap_or(".");
+    Ok(format!("\\\\{host}\\pipe\\{suffix}"))
+}
+
 #[cfg(test)]
 mod tests {
-    use super::{EndpointSpec, parse_legacy, parse_simple_uri};
+    use super::{EndpointSpec, ProxyAuth, parse_legacy, parse_simple_uri};
 
     #[test]
     fn parse_legacy_stdio() {
@@ -288,8 +360,28 @@ mod tests {
         let got = parse_legacy("SOCKS5:127.0.0.1:1080:example.com:443").expect("parse socks5");
         assert!(matches!(
             got,
-            EndpointSpec::Socks5Connect { proxy, target }
-                if proxy == "127.0.0.1:1080" && target == "example.com:443"
+            EndpointSpec::Socks5Connect {
+                proxy,
+                target,
+                auth: None
+            } if proxy == "127.0.0.1:1080" && target == "example.com:443"
+        ));
+    }
+
+    #[test]
+    fn parse_legacy_socks5_with_auth() {
+        let got = parse_legacy("SOCKS5:127.0.0.1:1080:example.com:443,socksuser=u,sockspass=p")
+            .expect("parse socks5 with auth");
+        assert!(matches!(
+            got,
+            EndpointSpec::Socks5Connect {
+                proxy,
+                target,
+                auth: Some(ProxyAuth { username, password })
+            } if proxy == "127.0.0.1:1080"
+                && target == "example.com:443"
+                && username == "u"
+                && password == "p"
         ));
     }
 
@@ -299,8 +391,28 @@ mod tests {
             .expect("parse http proxy");
         assert!(matches!(
             got,
-            EndpointSpec::HttpProxyConnect { proxy, target }
-                if proxy == "127.0.0.1:8080" && target == "example.com:443"
+            EndpointSpec::HttpProxyConnect {
+                proxy,
+                target,
+                auth: None
+            } if proxy == "127.0.0.1:8080" && target == "example.com:443"
+        ));
+    }
+
+    #[test]
+    fn parse_simple_http_proxy_with_auth() {
+        let got = parse_simple_uri("http-proxy://u:p@127.0.0.1:8080?target=example.com:443")
+            .expect("parse http proxy auth");
+        assert!(matches!(
+            got,
+            EndpointSpec::HttpProxyConnect {
+                proxy,
+                target,
+                auth: Some(ProxyAuth { username, password })
+            } if proxy == "127.0.0.1:8080"
+                && target == "example.com:443"
+                && username == "u"
+                && password == "p"
         ));
     }
 
@@ -323,5 +435,17 @@ mod tests {
             EndpointSpec::Socks4aConnect { proxy, target }
                 if proxy == "127.0.0.1:1080" && target == "example.com:443"
         ));
+    }
+
+    #[test]
+    fn parse_legacy_named_pipe() {
+        let got = parse_legacy("PIPE:echo").expect("parse legacy pipe");
+        assert!(matches!(got, EndpointSpec::NamedPipe(path) if path == r"\\.\pipe\echo"));
+    }
+
+    #[test]
+    fn parse_simple_named_pipe() {
+        let got = parse_simple_uri("npipe://./pipe/socat-rs").expect("parse npipe uri");
+        assert!(matches!(got, EndpointSpec::NamedPipe(path) if path == r"\\.\pipe\socat-rs"));
     }
 }

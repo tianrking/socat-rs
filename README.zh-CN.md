@@ -16,9 +16,12 @@
 - `socks4a-connect`
 - `socks5-connect`
 - `http-proxy-connect`
+  - 支持 URI 用户密码：`socks5://user:pass@proxy:1080?target=host:443`
+  - 支持 URI 用户密码：`http-proxy://user:pass@proxy:8080?target=host:443`
 - `exec` / `system` / `shell`
 - `unix-connect` / `unix-listen`（Unix）
 - `file`
+- `named-pipe-connect`（Windows，`npipe://` / `PIPE:` / `NPIPE:`）
 
 ## 常用命令
 
@@ -28,6 +31,7 @@ socat TCP-LISTEN:8080 STDIO
 
 # 简化模式
 socat link --from tcp-listen://0.0.0.0:8080 --to stdio://
+socat link --from npipe://./pipe/socat-rs --to tcp://127.0.0.1:9000
 
 # 机器可读清单
 socat --json inventory

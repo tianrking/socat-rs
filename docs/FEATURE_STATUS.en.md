@@ -40,6 +40,7 @@ Core principles:
 - `exec` / `system` / `shell`
 - `unix-connect` / `unix-listen` (unix platforms)
 - `file`
+- `named-pipe-connect` (Windows)
 
 ### 2.3 Engineering Foundation
 
@@ -67,8 +68,8 @@ Current constraints:
 
 ### 4.1 Network / Protocol Families
 
-- SOCKS4 / SOCKS4A / SOCKS5 (including bind/listen semantics)
-- PROXY / HTTP CONNECT
+- SOCKS4 / SOCKS4A / SOCKS5 bind/listen semantics
+- PROXY / HTTP CONNECT bind/listen semantics
 - DTLS
 - SCTP / DCCP / UDPLITE
 - RAW IP

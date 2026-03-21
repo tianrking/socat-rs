@@ -10,7 +10,7 @@ use tokio::process::{Child, ChildStdin, ChildStdout, Command};
 use tokio_native_tls::{TlsAcceptor as TokioTlsAcceptor, TlsConnector as TokioTlsConnector};
 
 use crate::error::SocoreError;
-use crate::spec::EndpointSpec;
+use crate::spec::{EndpointSpec, ProxyAuth};
 
 pub trait IoStream: AsyncRead + AsyncWrite + Unpin + Send {}
 impl<T> IoStream for T where T: AsyncRead + AsyncWrite + Unpin + Send {}
@@ -45,10 +45,16 @@ pub async fn open(spec: EndpointSpec) -> Result<Box<dyn IoStream>, SocoreError> 
         EndpointSpec::Socks4aConnect { proxy, target } => {
             open_socks4_connect(proxy, target, true).await
         }
-        EndpointSpec::Socks5Connect { proxy, target } => open_socks5_connect(proxy, target).await,
-        EndpointSpec::HttpProxyConnect { proxy, target } => {
-            open_http_proxy_connect(proxy, target).await
-        }
+        EndpointSpec::Socks5Connect {
+            proxy,
+            target,
+            auth,
+        } => open_socks5_connect(proxy, target, auth).await,
+        EndpointSpec::HttpProxyConnect {
+            proxy,
+            target,
+            auth,
+        } => open_http_proxy_connect(proxy, target, auth).await,
         EndpointSpec::Exec(cmd) => open_process_stream(cmd, ProcessKind::Exec).await,
         EndpointSpec::System(cmd) => open_process_stream(cmd, ProcessKind::System).await,
         EndpointSpec::Shell(cmd) => open_process_stream(cmd, ProcessKind::Shell).await,
@@ -64,6 +70,7 @@ pub async fn open(spec: EndpointSpec) -> Result<Box<dyn IoStream>, SocoreError> 
                 .await?;
             Ok(Box::new(file))
         }
+        EndpointSpec::NamedPipe(path) => open_named_pipe(path).await,
         EndpointSpec::Unsupported(name) => Err(SocoreError::UnsupportedEndpoint(name)),
     }
 }
@@ -111,17 +118,58 @@ async fn open_socks4_connect(
 async fn open_socks5_connect(
     proxy: String,
     target: String,
+    auth: Option<ProxyAuth>,
 ) -> Result<Box<dyn IoStream>, SocoreError> {
     let mut stream = TcpStream::connect(proxy).await?;
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
-    stream.write_all(&[0x05, 0x01, 0x00]).await?;
+    if auth.is_some() {
+        stream.write_all(&[0x05, 0x02, 0x00, 0x02]).await?;
+    } else {
+        stream.write_all(&[0x05, 0x01, 0x00]).await?;
+    }
     let mut method = [0_u8; 2];
     stream.read_exact(&mut method).await?;
-    if method != [0x05, 0x00] {
+    if method[0] != 0x05 {
         return Err(SocoreError::UnsupportedEndpoint(
-            "socks5 proxy rejected no-auth method".to_string(),
+            "invalid socks5 response".to_string(),
         ));
+    }
+    match method[1] {
+        0x00 => {}
+        0x02 => {
+            let creds = auth.ok_or_else(|| {
+                SocoreError::UnsupportedEndpoint(
+                    "socks5 proxy requires username/password auth".to_string(),
+                )
+            })?;
+            let uname = creds.username.as_bytes();
+            let pass = creds.password.as_bytes();
+            if uname.len() > 255 || pass.len() > 255 {
+                return Err(SocoreError::InvalidAddress(
+                    "socks5 username/password too long".to_string(),
+                ));
+            }
+            let mut auth_req = Vec::with_capacity(3 + uname.len() + pass.len());
+            auth_req.push(0x01);
+            auth_req.push(uname.len() as u8);
+            auth_req.extend_from_slice(uname);
+            auth_req.push(pass.len() as u8);
+            auth_req.extend_from_slice(pass);
+            stream.write_all(&auth_req).await?;
+            let mut auth_resp = [0_u8; 2];
+            stream.read_exact(&mut auth_resp).await?;
+            if auth_resp[1] != 0x00 {
+                return Err(SocoreError::UnsupportedEndpoint(
+                    "socks5 username/password auth failed".to_string(),
+                ));
+            }
+        }
+        m => {
+            return Err(SocoreError::UnsupportedEndpoint(format!(
+                "socks5 unsupported auth method selected: {m}"
+            )));
+        }
     }
 
     let (host, port) = split_host_port(&target)?;
@@ -174,13 +222,20 @@ async fn open_socks5_connect(
 async fn open_http_proxy_connect(
     proxy: String,
     target: String,
+    auth: Option<ProxyAuth>,
 ) -> Result<Box<dyn IoStream>, SocoreError> {
     let mut stream = TcpStream::connect(proxy).await?;
+    use base64::Engine;
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
-    let req = format!(
-        "CONNECT {target} HTTP/1.1\r\nHost: {target}\r\nProxy-Connection: Keep-Alive\r\n\r\n"
-    );
+    let mut req =
+        format!("CONNECT {target} HTTP/1.1\r\nHost: {target}\r\nProxy-Connection: Keep-Alive\r\n");
+    if let Some(auth) = auth {
+        let raw = format!("{}:{}", auth.username, auth.password);
+        let token = base64::engine::general_purpose::STANDARD.encode(raw);
+        req.push_str(&format!("Proxy-Authorization: Basic {token}\r\n"));
+    }
+    req.push_str("\r\n");
     stream.write_all(req.as_bytes()).await?;
 
     let mut response = Vec::new();
@@ -361,6 +416,21 @@ async fn open_unix_listen(path: PathBuf) -> Result<Box<dyn IoStream>, SocoreErro
     ))
 }
 
+#[cfg(windows)]
+async fn open_named_pipe(path: String) -> Result<Box<dyn IoStream>, SocoreError> {
+    use tokio::net::windows::named_pipe::ClientOptions;
+    let client = ClientOptions::new().open(path)?;
+    Ok(Box::new(client))
+}
+
+#[cfg(not(windows))]
+async fn open_named_pipe(path: String) -> Result<Box<dyn IoStream>, SocoreError> {
+    let _ = path;
+    Err(SocoreError::UnsupportedEndpoint(
+        "named pipe is only available on Windows".to_string(),
+    ))
+}
+
 struct StdioEndpoint {
     input: tokio::io::Stdin,
     output: tokio::io::Stdout,
@@ -518,7 +588,7 @@ mod tests {
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
     use tokio::net::TcpListener;
 
-    use crate::spec::EndpointSpec;
+    use crate::spec::{EndpointSpec, ProxyAuth};
 
     #[tokio::test]
     async fn udp_connect_roundtrip() {
@@ -579,6 +649,7 @@ mod tests {
         let mut stream = super::open(EndpointSpec::Socks5Connect {
             proxy: proxy_addr.to_string(),
             target: "example.com:443".to_string(),
+            auth: None,
         })
         .await
         .expect("open socks5");
@@ -615,6 +686,7 @@ mod tests {
         let _stream = super::open(EndpointSpec::HttpProxyConnect {
             proxy: proxy_addr.to_string(),
             target: "example.com:443".to_string(),
+            auth: None,
         })
         .await
         .expect("open http proxy");
@@ -677,5 +749,112 @@ mod tests {
         })
         .await
         .expect("open socks4a");
+    }
+
+    #[tokio::test]
+    async fn socks5_auth_handshake() {
+        let listener = TcpListener::bind("127.0.0.1:0").await.expect("bind");
+        let proxy_addr = listener.local_addr().expect("proxy addr");
+
+        tokio::spawn(async move {
+            let (mut socket, _) = listener.accept().await.expect("accept");
+            let mut greet = [0_u8; 4];
+            socket.read_exact(&mut greet).await.expect("read greeting");
+            socket
+                .write_all(&[0x05, 0x02])
+                .await
+                .expect("select auth method");
+
+            let mut auth_head = [0_u8; 2];
+            socket
+                .read_exact(&mut auth_head)
+                .await
+                .expect("read auth head");
+            let ulen = usize::from(auth_head[1]);
+            let mut uname = vec![0_u8; ulen];
+            socket.read_exact(&mut uname).await.expect("read username");
+            let mut plen = [0_u8; 1];
+            socket.read_exact(&mut plen).await.expect("read plen");
+            let mut pass = vec![0_u8; usize::from(plen[0])];
+            socket.read_exact(&mut pass).await.expect("read password");
+            socket.write_all(&[0x01, 0x00]).await.expect("auth ok");
+
+            let mut head = [0_u8; 5];
+            socket
+                .read_exact(&mut head)
+                .await
+                .expect("read connect head");
+            let domain_len = usize::from(head[4]);
+            let mut rest = vec![0_u8; domain_len + 2];
+            socket
+                .read_exact(&mut rest)
+                .await
+                .expect("read connect rest");
+            socket
+                .write_all(&[0x05, 0x00, 0x00, 0x01, 127, 0, 0, 1, 0x1f, 0x90])
+                .await
+                .expect("write connect ok");
+        });
+
+        let _stream = super::open(EndpointSpec::Socks5Connect {
+            proxy: proxy_addr.to_string(),
+            target: "example.com:443".to_string(),
+            auth: Some(ProxyAuth {
+                username: "u".to_string(),
+                password: "p".to_string(),
+            }),
+        })
+        .await
+        .expect("open socks5 auth");
+    }
+
+    #[tokio::test]
+    async fn http_proxy_basic_auth_header() {
+        let listener = TcpListener::bind("127.0.0.1:0").await.expect("bind");
+        let proxy_addr = listener.local_addr().expect("proxy addr");
+
+        tokio::spawn(async move {
+            let (mut socket, _) = listener.accept().await.expect("accept");
+            let mut req = Vec::new();
+            let mut buf = [0_u8; 1024];
+            loop {
+                let n = socket.read(&mut buf).await.expect("read request");
+                if n == 0 {
+                    break;
+                }
+                req.extend_from_slice(&buf[..n]);
+                if req.windows(4).any(|w| w == b"\r\n\r\n") {
+                    break;
+                }
+            }
+            let text = String::from_utf8(req).expect("utf8");
+            assert!(text.contains("Proxy-Authorization: Basic dTpw"));
+            socket
+                .write_all(b"HTTP/1.1 200 Connection Established\r\n\r\n")
+                .await
+                .expect("write response");
+        });
+
+        let _stream = super::open(EndpointSpec::HttpProxyConnect {
+            proxy: proxy_addr.to_string(),
+            target: "example.com:443".to_string(),
+            auth: Some(ProxyAuth {
+                username: "u".to_string(),
+                password: "p".to_string(),
+            }),
+        })
+        .await
+        .expect("open http proxy auth");
+    }
+
+    #[cfg(not(windows))]
+    #[tokio::test]
+    async fn named_pipe_not_supported_on_non_windows() {
+        let err = match super::open(EndpointSpec::NamedPipe(r"\\.\pipe\socat-rs".to_string())).await
+        {
+            Ok(_) => panic!("named pipe should be unsupported"),
+            Err(err) => err,
+        };
+        assert!(err.to_string().contains("only available on Windows"));
     }
 }
