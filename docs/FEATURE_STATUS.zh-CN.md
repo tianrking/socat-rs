@@ -32,6 +32,10 @@
   - `connect-timeout`（支持 ms / s 后缀）
   - `retry`
   - `retry-delay`（支持 ms / s 后缀）
+  - `retry-backoff`（`constant` / `exponential`）
+  - `retry-max-delay`
+  - `tls-verify`
+  - `tls-sni`
 - 内置 profile 预设：
   - `dev`
   - `prod`

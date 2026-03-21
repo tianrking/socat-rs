@@ -12,7 +12,7 @@ use tokio::time::sleep;
 use tokio_native_tls::{TlsAcceptor as TokioTlsAcceptor, TlsConnector as TokioTlsConnector};
 
 use crate::error::SocoreError;
-use crate::spec::{EndpointOptions, EndpointSpec, ProxyAuth};
+use crate::spec::{EndpointOptions, EndpointSpec, ProxyAuth, RetryBackoff};
 
 pub trait IoStream: AsyncRead + AsyncWrite + Unpin + Send {}
 impl<T> IoStream for T where T: AsyncRead + AsyncWrite + Unpin + Send {}
@@ -62,7 +62,8 @@ pub async fn open_with_options(
         EndpointSpec::TlsConnect(addr) => {
             with_connect_policy(options, || {
                 let addr = addr.clone();
-                async move { open_tls_connect(addr).await }
+                let options = options.clone();
+                async move { open_tls_connect(addr, &options).await }
             })
             .await
         }
@@ -151,7 +152,11 @@ where
 {
     let retry = options.retry.unwrap_or(0);
     let attempts = retry.saturating_add(1);
-    let delay = Duration::from_millis(options.retry_delay_ms.unwrap_or(200));
+    let base_delay_ms = options.retry_delay_ms.unwrap_or(200);
+    let backoff = options.retry_backoff.unwrap_or(RetryBackoff::Constant);
+    let max_delay_ms = options
+        .retry_max_delay_ms
+        .unwrap_or_else(|| base_delay_ms.saturating_mul(32));
 
     for attempt in 1..=attempts {
         let result = if let Some(timeout_ms) = options.connect_timeout_ms {
@@ -169,7 +174,15 @@ where
 
         match result {
             Ok(v) => return Ok(v),
-            Err(_) if attempt < attempts => sleep(delay).await,
+            Err(_) if attempt < attempts => {
+                let delay_ms = retry_delay_for_attempt(
+                    base_delay_ms,
+                    backoff,
+                    max_delay_ms,
+                    attempt.saturating_sub(1),
+                );
+                sleep(Duration::from_millis(delay_ms)).await
+            }
             Err(err) => return Err(err),
         }
     }
@@ -369,14 +382,40 @@ async fn open_http_proxy_connect(
     Ok(Box::new(stream))
 }
 
-async fn open_tls_connect(addr: String) -> Result<Box<dyn IoStream>, SocoreError> {
+async fn open_tls_connect(
+    addr: String,
+    options: &EndpointOptions,
+) -> Result<Box<dyn IoStream>, SocoreError> {
     let stream = TcpStream::connect(&addr).await?;
-    let host = extract_host(&addr);
+    let host = options
+        .tls_sni
+        .clone()
+        .unwrap_or_else(|| extract_host(&addr));
 
-    let connector = TlsConnector::builder().build()?;
+    let mut builder = TlsConnector::builder();
+    if matches!(options.tls_verify, Some(false)) {
+        builder.danger_accept_invalid_certs(true);
+    }
+    let connector = builder.build()?;
     let connector = TokioTlsConnector::from(connector);
     let tls = connector.connect(&host, stream).await?;
     Ok(Box::new(tls))
+}
+
+fn retry_delay_for_attempt(
+    base_delay_ms: u64,
+    backoff: RetryBackoff,
+    max_delay_ms: u64,
+    attempt_index: u32,
+) -> u64 {
+    let delay = match backoff {
+        RetryBackoff::Constant => base_delay_ms,
+        RetryBackoff::Exponential => {
+            let factor = 1_u64.checked_shl(attempt_index.min(20)).unwrap_or(u64::MAX);
+            base_delay_ms.saturating_mul(factor)
+        }
+    };
+    delay.min(max_delay_ms)
 }
 
 async fn open_tls_listen(addr: String) -> Result<Box<dyn IoStream>, SocoreError> {
@@ -696,7 +735,7 @@ mod tests {
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
     use tokio::net::TcpListener;
 
-    use crate::spec::{EndpointOptions, EndpointSpec, ProxyAuth};
+    use crate::spec::{EndpointOptions, EndpointSpec, ProxyAuth, RetryBackoff};
 
     #[tokio::test]
     async fn udp_connect_roundtrip() {
@@ -973,6 +1012,10 @@ mod tests {
             connect_timeout_ms: None,
             retry: Some(2),
             retry_delay_ms: Some(1),
+            retry_backoff: Some(RetryBackoff::Constant),
+            retry_max_delay_ms: None,
+            tls_verify: None,
+            tls_sni: None,
         };
 
         let value = super::with_connect_policy(&options, {
@@ -1004,6 +1047,10 @@ mod tests {
             connect_timeout_ms: Some(10),
             retry: Some(0),
             retry_delay_ms: Some(1),
+            retry_backoff: Some(RetryBackoff::Constant),
+            retry_max_delay_ms: None,
+            tls_verify: None,
+            tls_sni: None,
         };
 
         let err = super::with_connect_policy(&options, || async {
@@ -1014,5 +1061,15 @@ mod tests {
         .expect_err("should timeout");
 
         assert!(err.to_string().contains("timeout"));
+    }
+
+    #[test]
+    fn retry_backoff_exponential_caps_at_max() {
+        let d1 = super::retry_delay_for_attempt(100, RetryBackoff::Exponential, 10_000, 0);
+        let d2 = super::retry_delay_for_attempt(100, RetryBackoff::Exponential, 10_000, 3);
+        let d3 = super::retry_delay_for_attempt(100, RetryBackoff::Exponential, 700, 10);
+        assert_eq!(d1, 100);
+        assert_eq!(d2, 800);
+        assert_eq!(d3, 700);
     }
 }

@@ -14,6 +14,17 @@ pub struct EndpointOptions {
     pub connect_timeout_ms: Option<u64>,
     pub retry: Option<u32>,
     pub retry_delay_ms: Option<u64>,
+    pub retry_backoff: Option<RetryBackoff>,
+    pub retry_max_delay_ms: Option<u64>,
+    pub tls_verify: Option<bool>,
+    pub tls_sni: Option<String>,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "kebab-case")]
+pub enum RetryBackoff {
+    Constant,
+    Exponential,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -318,6 +329,32 @@ fn parse_endpoint_options(options: &[String]) -> Result<EndpointOptions, SocoreE
             "retry-delay" | "retry_delay" => {
                 out.retry_delay_ms = Some(parse_duration_to_ms(value)?);
             }
+            "retry-backoff" | "retry_backoff" => {
+                out.retry_backoff = Some(match value.to_ascii_lowercase().as_str() {
+                    "constant" => RetryBackoff::Constant,
+                    "exponential" => RetryBackoff::Exponential,
+                    other => {
+                        return Err(SocoreError::InvalidAddress(format!(
+                            "invalid retry-backoff value: {other}"
+                        )));
+                    }
+                });
+            }
+            "retry-max-delay" | "retry_max_delay" => {
+                out.retry_max_delay_ms = Some(parse_duration_to_ms(value)?);
+            }
+            "tls-verify" | "tls_verify" | "verify" => {
+                out.tls_verify = Some(parse_bool(value)?);
+            }
+            "tls-sni" | "tls_sni" | "sni" => {
+                let sni = value.trim();
+                if sni.is_empty() {
+                    return Err(SocoreError::InvalidAddress(
+                        "sni cannot be empty".to_string(),
+                    ));
+                }
+                out.tls_sni = Some(sni.to_string());
+            }
             _ => {}
         }
     }
@@ -346,6 +383,16 @@ fn parse_duration_to_ms(value: &str) -> Result<u64, SocoreError> {
     }
     v.parse::<u64>()
         .map_err(|_| SocoreError::InvalidAddress(format!("invalid duration value: {value}")))
+}
+
+fn parse_bool(value: &str) -> Result<bool, SocoreError> {
+    match value.trim().to_ascii_lowercase().as_str() {
+        "1" | "true" | "yes" | "on" => Ok(true),
+        "0" | "false" | "no" | "off" => Ok(false),
+        other => Err(SocoreError::InvalidAddress(format!(
+            "invalid boolean value: {other}"
+        ))),
+    }
 }
 
 fn command_from_url(url: &url::Url) -> Result<String, SocoreError> {
@@ -398,8 +445,8 @@ fn normalize_named_pipe(host: Option<&str>, path_or_value: &str) -> Result<Strin
 #[cfg(test)]
 mod tests {
     use super::{
-        EndpointOptions, EndpointSpec, ProxyAuth, parse_legacy, parse_legacy_with_options,
-        parse_simple_uri, parse_simple_uri_with_options,
+        EndpointOptions, EndpointSpec, ProxyAuth, RetryBackoff, parse_legacy,
+        parse_legacy_with_options, parse_simple_uri, parse_simple_uri_with_options,
     };
 
     #[test]
@@ -552,6 +599,10 @@ mod tests {
                 connect_timeout_ms: None,
                 retry: Some(2),
                 retry_delay_ms: Some(150),
+                retry_backoff: None,
+                retry_max_delay_ms: None,
+                tls_verify: None,
+                tls_sni: None,
             }
         );
     }
@@ -559,7 +610,7 @@ mod tests {
     #[test]
     fn parse_simple_uri_with_runtime_options() {
         let plan = parse_simple_uri_with_options(
-            "tcp://127.0.0.1:8080?connect-timeout=2s&retry=3&retry-delay=500ms",
+            "tcp://127.0.0.1:8080?connect-timeout=2s&retry=3&retry-delay=500ms&retry-backoff=exponential&retry-max-delay=2s",
         )
         .expect("parse simple options");
         assert!(matches!(
@@ -572,6 +623,30 @@ mod tests {
                 connect_timeout_ms: Some(2000),
                 retry: Some(3),
                 retry_delay_ms: Some(500),
+                retry_backoff: Some(RetryBackoff::Exponential),
+                retry_max_delay_ms: Some(2000),
+                tls_verify: None,
+                tls_sni: None,
+            }
+        );
+    }
+
+    #[test]
+    fn parse_tls_options() {
+        let plan = parse_simple_uri_with_options(
+            "tls://example.com:443?tls-verify=false&sni=alt.example.com",
+        )
+        .expect("parse tls options");
+        assert_eq!(
+            plan.options,
+            EndpointOptions {
+                connect_timeout_ms: None,
+                retry: None,
+                retry_delay_ms: None,
+                retry_backoff: None,
+                retry_max_delay_ms: None,
+                tls_verify: Some(false),
+                tls_sni: Some("alt.example.com".to_string()),
             }
         );
     }

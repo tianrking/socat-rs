@@ -32,6 +32,10 @@ Core principles:
   - `connect-timeout` (ms / `s` / `ms`)
   - `retry`
   - `retry-delay` (ms / `s` / `ms`)
+  - `retry-backoff` (`constant` / `exponential`)
+  - `retry-max-delay`
+  - `tls-verify`
+  - `tls-sni`
 - Built-in profile presets:
   - `dev`
   - `prod`

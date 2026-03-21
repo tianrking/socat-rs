@@ -17,6 +17,10 @@ Implemented now:
   - `connect-timeout`
   - `retry`
   - `retry-delay`
+  - `retry-backoff`
+  - `retry-max-delay`
+  - `tls-verify`
+  - `tls-sni`
 - Friendly CLI planning path:
   - `plan` and `validate` commands with JSON output
   - built-in `dev/prod/lan/wan` profile defaults

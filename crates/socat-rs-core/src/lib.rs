@@ -110,21 +110,37 @@ impl ProfilePreset {
                 connect_timeout_ms: Some(3_000),
                 retry: Some(1),
                 retry_delay_ms: Some(200),
+                retry_backoff: Some(crate::spec::RetryBackoff::Constant),
+                retry_max_delay_ms: None,
+                tls_verify: None,
+                tls_sni: None,
             },
             Self::Prod => EndpointOptions {
                 connect_timeout_ms: Some(5_000),
                 retry: Some(5),
                 retry_delay_ms: Some(500),
+                retry_backoff: Some(crate::spec::RetryBackoff::Exponential),
+                retry_max_delay_ms: Some(10_000),
+                tls_verify: Some(true),
+                tls_sni: None,
             },
             Self::Lan => EndpointOptions {
                 connect_timeout_ms: Some(1_500),
                 retry: Some(2),
                 retry_delay_ms: Some(100),
+                retry_backoff: Some(crate::spec::RetryBackoff::Constant),
+                retry_max_delay_ms: None,
+                tls_verify: None,
+                tls_sni: None,
             },
             Self::Wan => EndpointOptions {
                 connect_timeout_ms: Some(10_000),
                 retry: Some(4),
                 retry_delay_ms: Some(1_000),
+                retry_backoff: Some(crate::spec::RetryBackoff::Exponential),
+                retry_max_delay_ms: Some(15_000),
+                tls_verify: Some(true),
+                tls_sni: None,
             },
         }
     }
@@ -370,6 +386,10 @@ mod tests {
                 connect_timeout_ms: None,
                 retry: Some(9),
                 retry_delay_ms: None,
+                retry_backoff: None,
+                retry_max_delay_ms: None,
+                tls_verify: None,
+                tls_sni: None,
             },
         };
         let got = apply_profile(plan, Some(ProfilePreset::Lan));

@@ -26,6 +26,10 @@
   - `connect-timeout`
   - `retry`
   - `retry-delay`
+  - `retry-backoff`（`constant` / `exponential`）
+  - `retry-max-delay`
+  - `tls-verify`
+  - `tls-sni`
 - 内置 profile：
   - `dev`
   - `prod`
@@ -44,6 +48,8 @@ socat TCP-LISTEN:8080 STDIO
 socat link --from tcp-listen://0.0.0.0:8080 --to stdio://
 socat link --from npipe://./pipe/socat-rs --to tcp://127.0.0.1:9000
 socat link --from "tcp://127.0.0.1:9000?connect-timeout=2s&retry=3&retry-delay=500ms" --to stdio://
+socat link --from "tcp://127.0.0.1:9000?retry=5&retry-backoff=exponential&retry-max-delay=8s" --to stdio://
+socat link --from "tls://example.com:443?tls-verify=false&sni=alt.example.com" --to stdio://
 socat link --profile prod --from tcp://example.com:443 --to stdio://
 socat tunnel --via socks5://127.0.0.1:1080 --to example.com:443
 socat tunnel --from stdio:// --via http-proxy://u:p@127.0.0.1:8080 --to api.example.com:443
