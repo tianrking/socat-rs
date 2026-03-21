@@ -34,6 +34,8 @@
     - `SOCAT_RS_TLS_PKCS12`
     - `SOCAT_RS_TLS_PASSWORD`（可为空）
 - `socks5-connect`
+- `socks4-connect`
+- `socks4a-connect`
 - `http-proxy-connect`
 - `exec` / `system` / `shell`
 - `unix-connect` / `unix-listen`（unix平台）

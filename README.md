@@ -27,6 +27,8 @@ Current implemented endpoint families:
 - `udp-listen`
 - `tls-connect`
 - `tls-listen` (requires `SOCAT_RS_TLS_PKCS12`)
+- `socks4-connect`
+- `socks4a-connect`
 - `socks5-connect`
 - `http-proxy-connect`
 - `exec`

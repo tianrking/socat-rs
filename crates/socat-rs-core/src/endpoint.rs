@@ -1,4 +1,5 @@
 use std::env;
+use std::net::Ipv4Addr;
 use std::path::PathBuf;
 
 use native_tls::{Identity, TlsAcceptor, TlsConnector};
@@ -38,6 +39,12 @@ pub async fn open(spec: EndpointSpec) -> Result<Box<dyn IoStream>, SocoreError> 
         }
         EndpointSpec::TlsConnect(addr) => open_tls_connect(addr).await,
         EndpointSpec::TlsListen(addr) => open_tls_listen(addr).await,
+        EndpointSpec::Socks4Connect { proxy, target } => {
+            open_socks4_connect(proxy, target, false).await
+        }
+        EndpointSpec::Socks4aConnect { proxy, target } => {
+            open_socks4_connect(proxy, target, true).await
+        }
         EndpointSpec::Socks5Connect { proxy, target } => open_socks5_connect(proxy, target).await,
         EndpointSpec::HttpProxyConnect { proxy, target } => {
             open_http_proxy_connect(proxy, target).await
@@ -59,6 +66,46 @@ pub async fn open(spec: EndpointSpec) -> Result<Box<dyn IoStream>, SocoreError> 
         }
         EndpointSpec::Unsupported(name) => Err(SocoreError::UnsupportedEndpoint(name)),
     }
+}
+
+async fn open_socks4_connect(
+    proxy: String,
+    target: String,
+    use_4a: bool,
+) -> Result<Box<dyn IoStream>, SocoreError> {
+    let mut stream = TcpStream::connect(proxy).await?;
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+    let (host, port) = split_host_port(&target)?;
+    let mut req = Vec::new();
+    req.push(0x04);
+    req.push(0x01);
+    req.extend_from_slice(&port.to_be_bytes());
+    if use_4a {
+        req.extend_from_slice(&[0, 0, 0, 1]);
+        req.push(0x00);
+        req.extend_from_slice(host.as_bytes());
+        req.push(0x00);
+    } else {
+        let ip = host.parse::<Ipv4Addr>().map_err(|_| {
+            SocoreError::InvalidAddress(
+                "SOCKS4 requires IPv4 target; use SOCKS4A for domain targets".to_string(),
+            )
+        })?;
+        req.extend_from_slice(&ip.octets());
+        req.push(0x00);
+    }
+
+    stream.write_all(&req).await?;
+    let mut resp = [0_u8; 8];
+    stream.read_exact(&mut resp).await?;
+    if resp[1] != 0x5a {
+        return Err(SocoreError::UnsupportedEndpoint(format!(
+            "socks4 connect failed with reply code {}",
+            resp[1]
+        )));
+    }
+    Ok(Box::new(stream))
 }
 
 async fn open_socks5_connect(
@@ -571,5 +618,64 @@ mod tests {
         })
         .await
         .expect("open http proxy");
+    }
+
+    #[tokio::test]
+    async fn socks4_connect_handshake() {
+        let listener = TcpListener::bind("127.0.0.1:0").await.expect("bind");
+        let proxy_addr = listener.local_addr().expect("proxy addr");
+
+        tokio::spawn(async move {
+            let (mut socket, _) = listener.accept().await.expect("accept");
+            let mut req = [0_u8; 9];
+            socket.read_exact(&mut req).await.expect("read request");
+            socket
+                .write_all(&[0x00, 0x5a, 0x01, 0xbb, 127, 0, 0, 1])
+                .await
+                .expect("write response");
+        });
+
+        let _stream = super::open(EndpointSpec::Socks4Connect {
+            proxy: proxy_addr.to_string(),
+            target: "1.2.3.4:443".to_string(),
+        })
+        .await
+        .expect("open socks4");
+    }
+
+    #[tokio::test]
+    async fn socks4a_connect_handshake() {
+        let listener = TcpListener::bind("127.0.0.1:0").await.expect("bind");
+        let proxy_addr = listener.local_addr().expect("proxy addr");
+
+        tokio::spawn(async move {
+            let (mut socket, _) = listener.accept().await.expect("accept");
+            let mut req = Vec::new();
+            let mut buf = [0_u8; 256];
+            loop {
+                let n = socket.read(&mut buf).await.expect("read request");
+                if n == 0 {
+                    break;
+                }
+                req.extend_from_slice(&buf[..n]);
+                if req.ends_with(b"\x00") {
+                    break;
+                }
+                if req.len() > 256 {
+                    break;
+                }
+            }
+            socket
+                .write_all(&[0x00, 0x5a, 0x01, 0xbb, 127, 0, 0, 1])
+                .await
+                .expect("write response");
+        });
+
+        let _stream = super::open(EndpointSpec::Socks4aConnect {
+            proxy: proxy_addr.to_string(),
+            target: "example.com:443".to_string(),
+        })
+        .await
+        .expect("open socks4a");
     }
 }

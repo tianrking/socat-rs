@@ -12,6 +12,8 @@ pub enum EndpointSpec {
     UdpListen(String),
     TlsConnect(String),
     TlsListen(String),
+    Socks4Connect { proxy: String, target: String },
+    Socks4aConnect { proxy: String, target: String },
     Socks5Connect { proxy: String, target: String },
     HttpProxyConnect { proxy: String, target: String },
     Exec(String),
@@ -89,6 +91,27 @@ mod tests {
                 if proxy == "127.0.0.1:8080" && target == "example.com:443"
         ));
     }
+
+    #[test]
+    fn parse_legacy_socks4() {
+        let got = parse_legacy("SOCKS4:127.0.0.1:1080:1.2.3.4:443").expect("parse socks4");
+        assert!(matches!(
+            got,
+            EndpointSpec::Socks4Connect { proxy, target }
+                if proxy == "127.0.0.1:1080" && target == "1.2.3.4:443"
+        ));
+    }
+
+    #[test]
+    fn parse_simple_socks4a() {
+        let got =
+            parse_simple_uri("socks4a://127.0.0.1:1080?target=example.com:443").expect("parse");
+        assert!(matches!(
+            got,
+            EndpointSpec::Socks4aConnect { proxy, target }
+                if proxy == "127.0.0.1:1080" && target == "example.com:443"
+        ));
+    }
 }
 
 pub fn parse_legacy(input: &str) -> Result<EndpointSpec, SocoreError> {
@@ -119,6 +142,8 @@ pub fn parse_legacy(input: &str) -> Result<EndpointSpec, SocoreError> {
             Ok(EndpointSpec::TlsConnect(value))
         }
         "SSL-LISTEN" | "SSL-L" | "OPENSSL-LISTEN" => Ok(EndpointSpec::TlsListen(value)),
+        "SOCKS4" | "SOCKS4-CONNECT" => parse_legacy_proxy4_family(&value, ProxyKind::Socks4),
+        "SOCKS4A" | "SOCKS4A-CONNECT" => parse_legacy_proxy4_family(&value, ProxyKind::Socks4a),
         "SOCKS5" | "SOCKS5-CONNECT" => parse_legacy_proxy4(&value, true),
         "PROXY" | "PROXY-CONNECT" => parse_legacy_proxy4(&value, false),
         "EXEC" => Ok(EndpointSpec::Exec(value)),
@@ -182,6 +207,8 @@ pub fn parse_simple_uri(input: &str) -> Result<EndpointSpec, SocoreError> {
                 .ok_or_else(|| SocoreError::InvalidAddress(input.to_string()))?;
             Ok(EndpointSpec::TlsListen(format!("{host}:{port}")))
         }
+        "socks4" => parse_simple_proxy_uri_family(&url, ProxyKind::Socks4),
+        "socks4a" => parse_simple_proxy_uri_family(&url, ProxyKind::Socks4a),
         "socks5" => parse_simple_proxy_uri(&url, true),
         "http-proxy" | "proxy" => parse_simple_proxy_uri(&url, false),
         "exec" => Ok(EndpointSpec::Exec(command_from_url(&url)?)),
@@ -211,6 +238,28 @@ fn parse_legacy_proxy4(value: &str, socks5: bool) -> Result<EndpointSpec, Socore
     }
 }
 
+#[derive(Clone, Copy)]
+enum ProxyKind {
+    Socks4,
+    Socks4a,
+}
+
+fn parse_legacy_proxy4_family(value: &str, kind: ProxyKind) -> Result<EndpointSpec, SocoreError> {
+    let parts: Vec<&str> = value.split(':').collect();
+    if parts.len() < 4 {
+        return Err(SocoreError::InvalidAddress(
+            "expected SOCKS4/SOCKS4A format: <proxy-host>:<proxy-port>:<target-host>:<target-port>"
+                .to_string(),
+        ));
+    }
+    let proxy = format!("{}:{}", parts[0], parts[1]);
+    let target = format!("{}:{}", parts[2], parts[3]);
+    match kind {
+        ProxyKind::Socks4 => Ok(EndpointSpec::Socks4Connect { proxy, target }),
+        ProxyKind::Socks4a => Ok(EndpointSpec::Socks4aConnect { proxy, target }),
+    }
+}
+
 fn parse_simple_proxy_uri(url: &url::Url, socks5: bool) -> Result<EndpointSpec, SocoreError> {
     let proxy_host = url
         .host_str()
@@ -232,6 +281,32 @@ fn parse_simple_proxy_uri(url: &url::Url, socks5: bool) -> Result<EndpointSpec, 
         Ok(EndpointSpec::Socks5Connect { proxy, target })
     } else {
         Ok(EndpointSpec::HttpProxyConnect { proxy, target })
+    }
+}
+
+fn parse_simple_proxy_uri_family(
+    url: &url::Url,
+    kind: ProxyKind,
+) -> Result<EndpointSpec, SocoreError> {
+    let proxy_host = url
+        .host_str()
+        .ok_or_else(|| SocoreError::InvalidAddress("missing proxy host".to_string()))?;
+    let proxy_port = url
+        .port_or_known_default()
+        .ok_or_else(|| SocoreError::InvalidAddress("missing proxy port".to_string()))?;
+    let target = url
+        .query_pairs()
+        .find(|(k, _)| k == "target")
+        .map(|(_, v)| v.to_string())
+        .ok_or_else(|| {
+            SocoreError::InvalidAddress(
+                "missing target; use '?target=host:port' for proxy endpoints".to_string(),
+            )
+        })?;
+    let proxy = format!("{proxy_host}:{proxy_port}");
+    match kind {
+        ProxyKind::Socks4 => Ok(EndpointSpec::Socks4Connect { proxy, target }),
+        ProxyKind::Socks4a => Ok(EndpointSpec::Socks4aConnect { proxy, target }),
     }
 }
 

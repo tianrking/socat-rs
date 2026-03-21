@@ -10,6 +10,8 @@ pub const COMPAT_MODES: &[&str] = &[
     "udp-listen",
     "tls-connect",
     "tls-listen",
+    "socks4-connect",
+    "socks4a-connect",
     "socks5-connect",
     "http-proxy-connect",
     "exec",
