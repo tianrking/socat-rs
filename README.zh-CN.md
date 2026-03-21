@@ -31,6 +31,8 @@
   - `prod`
   - `lan`
   - `wan`
+- 运行态 `--json` 会输出 link 执行报告（run-report）
+- Prometheus 指标端点：`--metrics-bind <host:port>`
 
 ## 常用命令
 
@@ -51,6 +53,7 @@ socat --json validate --profile wan --from tcp://api.example.com:443 --to stdio:
 # 机器可读清单
 socat --json inventory
 socat --json explain "TCP:127.0.0.1:9000,connect-timeout=2000,retry=3,retry-delay=500ms"
+socat --json --metrics-bind 0.0.0.0:9464 link --from tcp://127.0.0.1:9000 --to stdio://
 ```
 
 ## 文档

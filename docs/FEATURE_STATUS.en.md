@@ -35,6 +35,8 @@ Core principles:
   - `prod`
   - `lan`
   - `wan`
+- JSON run-report for executed link operations
+- Prometheus metrics endpoint via `--metrics-bind`
 
 ### 2.2 Endpoint Capabilities Available
 

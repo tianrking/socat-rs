@@ -35,6 +35,8 @@
   - `prod`
   - `lan`
   - `wan`
+- link 实际执行后可输出 JSON 运行报告（run-report）
+- 支持 `--metrics-bind` 暴露 Prometheus 指标
 
 ### 2.2 端点能力（已可用）
 

@@ -1,11 +1,13 @@
 mod endpoint;
 mod error;
+mod metrics;
 mod relay;
 mod spec;
 
 use anyhow::Context;
 use clap::{Args, Parser, Subcommand, ValueEnum};
 use serde::Serialize;
+use std::time::Instant;
 
 use crate::error::SocoreError;
 use crate::spec::{EndpointOptions, EndpointPlan};
@@ -25,6 +27,12 @@ struct Cli {
         help = "Apply built-in connection profile defaults"
     )]
     profile: Option<ProfilePreset>,
+    #[arg(
+        global = true,
+        long,
+        help = "Expose Prometheus metrics on host:port (e.g. 0.0.0.0:9464)"
+    )]
+    metrics_bind: Option<String>,
     #[command(subcommand)]
     command: Option<Command>,
     #[arg(value_name = "ADDRESS", num_args = 0..=2)]
@@ -55,6 +63,16 @@ struct PlanOutput {
     valid: bool,
     from: EndpointPlan,
     to: EndpointPlan,
+}
+
+#[derive(Debug, Serialize)]
+struct RunReport {
+    mode: &'static str,
+    profile: Option<String>,
+    from: EndpointPlan,
+    to: EndpointPlan,
+    stats: relay::RelayStats,
+    duration_ms: u128,
 }
 
 #[derive(Debug, Clone, Copy, ValueEnum)]
@@ -106,7 +124,16 @@ pub fn run() -> anyhow::Result<()> {
     let cli = Cli::parse();
     let runtime = tokio::runtime::Runtime::new().context("failed to create tokio runtime")?;
 
-    let result = runtime.block_on(async move { dispatch(cli).await });
+    let result = runtime.block_on(async move {
+        if let Some(bind) = cli.metrics_bind.clone() {
+            tokio::spawn(async move {
+                if let Err(err) = metrics::serve_prometheus(bind).await {
+                    tracing::warn!("metrics server exited: {err}");
+                }
+            });
+        }
+        dispatch(cli).await
+    });
 
     if let Err(err) = result {
         return Err(anyhow::Error::new(err));
@@ -153,7 +180,7 @@ async fn dispatch(cli: Cli) -> Result<(), SocoreError> {
                 emit(cli.json, &out)?;
                 return Ok(());
             }
-            relay::bridge_with_plans(left, right).await
+            run_link_and_maybe_emit_report("simple", profile, left, right, cli.json).await
         }
         (None, [left, right]) => {
             let left = apply_profile(spec::parse_legacy_with_options(left)?, profile);
@@ -169,7 +196,7 @@ async fn dispatch(cli: Cli) -> Result<(), SocoreError> {
                 emit(cli.json, &out)?;
                 return Ok(());
             }
-            relay::bridge_with_plans(left, right).await
+            run_link_and_maybe_emit_report("legacy", profile, left, right, cli.json).await
         }
         _ => Err(SocoreError::InvalidAddress(
             "expected either: `socat <addr1> <addr2>` or `socat link --from ... --to ...`"
@@ -235,6 +262,38 @@ fn apply_profile(mut plan: EndpointPlan, profile: Option<ProfilePreset>) -> Endp
         plan.options.retry_delay_ms = plan.options.retry_delay_ms.or(defaults.retry_delay_ms);
     }
     plan
+}
+
+async fn run_link_and_maybe_emit_report(
+    mode: &'static str,
+    profile: Option<ProfilePreset>,
+    left: EndpointPlan,
+    right: EndpointPlan,
+    json: bool,
+) -> Result<(), SocoreError> {
+    metrics::record_connection_start();
+    let started = Instant::now();
+    match relay::bridge_with_plans(left.clone(), right.clone()).await {
+        Ok(stats) => {
+            metrics::record_bytes(stats.bytes_left_to_right, stats.bytes_right_to_left);
+            if json {
+                let report = RunReport {
+                    mode,
+                    profile: profile.map(|p| p.as_str().to_string()),
+                    from: left,
+                    to: right,
+                    stats,
+                    duration_ms: started.elapsed().as_millis(),
+                };
+                emit(true, &report)?;
+            }
+            Ok(())
+        }
+        Err(err) => {
+            metrics::record_connection_failed();
+            Err(err)
+        }
+    }
 }
 
 #[cfg(test)]

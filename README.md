@@ -51,6 +51,8 @@ Current implemented endpoint families:
   - `prod`
   - `lan`
   - `wan`
+- run-report JSON for executed links (`--json`)
+- Prometheus metrics endpoint: `--metrics-bind <host:port>`
 
 ## Why two command styles
 
@@ -82,6 +84,7 @@ socat --json validate --profile wan --from tcp://api.example.com:443 --to stdio:
 socat --json explain "TCP-LISTEN:8080"
 socat --json explain "TCP:127.0.0.1:9000,connect-timeout=2000,retry=3,retry-delay=500ms"
 socat --json inventory
+socat --json --metrics-bind 0.0.0.0:9464 link --from tcp://127.0.0.1:9000 --to stdio://
 ```
 
 ## Architecture
