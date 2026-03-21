@@ -124,6 +124,8 @@ See:
 - `docs/compatibility-roadmap.md`
 - `docs/FEATURE_STATUS.zh-CN.md`
 - `docs/FEATURE_STATUS.en.md`
+- `docs/V1_READY.en.md`
+- `docs/V1_READY.zh-CN.md`
 - `README.zh-CN.md`
 
 ## Build

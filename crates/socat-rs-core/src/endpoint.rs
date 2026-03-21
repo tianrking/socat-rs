@@ -461,6 +461,17 @@ async fn open_tls_connect(
     if matches!(options.tls_verify, Some(false)) {
         builder.danger_accept_invalid_certs(true);
     }
+    if let Some(ca_file) = &options.tls_ca_file {
+        let ca_bytes = std::fs::read(ca_file)?;
+        let cert = native_tls::Certificate::from_pem(&ca_bytes)?;
+        builder.add_root_certificate(cert);
+    }
+    if let Some(pkcs12_file) = &options.tls_client_pkcs12 {
+        let der = std::fs::read(pkcs12_file)?;
+        let password = options.tls_client_password.clone().unwrap_or_default();
+        let identity = Identity::from_pkcs12(&der, &password)?;
+        builder.identity(identity);
+    }
     let connector = builder.build()?;
     let connector = TokioTlsConnector::from(connector);
     let tls = connector.connect(&host, stream).await?;
@@ -1163,6 +1174,9 @@ mod tests {
             retry_max_delay_ms: None,
             tls_verify: None,
             tls_sni: None,
+            tls_ca_file: None,
+            tls_client_pkcs12: None,
+            tls_client_password: None,
         };
 
         let value = super::with_connect_policy(&options, {
@@ -1198,6 +1212,9 @@ mod tests {
             retry_max_delay_ms: None,
             tls_verify: None,
             tls_sni: None,
+            tls_ca_file: None,
+            tls_client_pkcs12: None,
+            tls_client_password: None,
         };
 
         let err = super::with_connect_policy(&options, || async {

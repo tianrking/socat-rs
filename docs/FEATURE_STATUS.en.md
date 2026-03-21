@@ -39,6 +39,9 @@ Core principles:
   - `retry-max-delay`
   - `tls-verify`
   - `tls-sni`
+  - `tls-ca-file`
+  - `tls-client-pkcs12`
+  - `tls-client-password`
 - Built-in profile presets:
   - `dev`
   - `prod`

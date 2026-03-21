@@ -34,6 +34,9 @@ pub struct EndpointOptions {
     pub retry_max_delay_ms: Option<u64>,
     pub tls_verify: Option<bool>,
     pub tls_sni: Option<String>,
+    pub tls_ca_file: Option<String>,
+    pub tls_client_pkcs12: Option<String>,
+    pub tls_client_password: Option<String>,
 }
 
 #[derive(Debug, Clone, Copy, Serialize, PartialEq, Eq)]
@@ -399,6 +402,27 @@ fn parse_endpoint_options(options: &[String]) -> Result<EndpointOptions, SocoreE
                 }
                 out.tls_sni = Some(sni.to_string());
             }
+            "tls-ca-file" | "tls_ca_file" | "cafile" => {
+                let path = value.trim();
+                if path.is_empty() {
+                    return Err(SocoreError::InvalidAddress(
+                        "tls ca file cannot be empty".to_string(),
+                    ));
+                }
+                out.tls_ca_file = Some(path.to_string());
+            }
+            "tls-client-pkcs12" | "tls_client_pkcs12" => {
+                let path = value.trim();
+                if path.is_empty() {
+                    return Err(SocoreError::InvalidAddress(
+                        "tls client pkcs12 cannot be empty".to_string(),
+                    ));
+                }
+                out.tls_client_pkcs12 = Some(path.to_string());
+            }
+            "tls-client-password" | "tls_client_password" => {
+                out.tls_client_password = Some(value.to_string());
+            }
             _ => {}
         }
     }
@@ -647,6 +671,9 @@ mod tests {
                 retry_max_delay_ms: None,
                 tls_verify: None,
                 tls_sni: None,
+                tls_ca_file: None,
+                tls_client_pkcs12: None,
+                tls_client_password: None,
             }
         );
     }
@@ -671,6 +698,9 @@ mod tests {
                 retry_max_delay_ms: Some(2000),
                 tls_verify: None,
                 tls_sni: None,
+                tls_ca_file: None,
+                tls_client_pkcs12: None,
+                tls_client_password: None,
             }
         );
     }
@@ -691,6 +721,32 @@ mod tests {
                 retry_max_delay_ms: None,
                 tls_verify: Some(false),
                 tls_sni: Some("alt.example.com".to_string()),
+                tls_ca_file: None,
+                tls_client_pkcs12: None,
+                tls_client_password: None,
+            }
+        );
+    }
+
+    #[test]
+    fn parse_tls_cert_options() {
+        let plan = parse_simple_uri_with_options(
+            "tls://example.com:443?tls-ca-file=/tmp/ca.pem&tls-client-pkcs12=/tmp/client.p12&tls-client-password=secret",
+        )
+        .expect("parse tls cert options");
+        assert_eq!(
+            plan.options,
+            EndpointOptions {
+                connect_timeout_ms: None,
+                retry: None,
+                retry_delay_ms: None,
+                retry_backoff: None,
+                retry_max_delay_ms: None,
+                tls_verify: None,
+                tls_sni: None,
+                tls_ca_file: Some("/tmp/ca.pem".to_string()),
+                tls_client_pkcs12: Some("/tmp/client.p12".to_string()),
+                tls_client_password: Some("secret".to_string()),
             }
         );
     }

@@ -126,6 +126,9 @@ impl ProfilePreset {
                 retry_max_delay_ms: None,
                 tls_verify: None,
                 tls_sni: None,
+                tls_ca_file: None,
+                tls_client_pkcs12: None,
+                tls_client_password: None,
             },
             Self::Prod => EndpointOptions {
                 connect_timeout_ms: Some(5_000),
@@ -135,6 +138,9 @@ impl ProfilePreset {
                 retry_max_delay_ms: Some(10_000),
                 tls_verify: Some(true),
                 tls_sni: None,
+                tls_ca_file: None,
+                tls_client_pkcs12: None,
+                tls_client_password: None,
             },
             Self::Lan => EndpointOptions {
                 connect_timeout_ms: Some(1_500),
@@ -144,6 +150,9 @@ impl ProfilePreset {
                 retry_max_delay_ms: None,
                 tls_verify: None,
                 tls_sni: None,
+                tls_ca_file: None,
+                tls_client_pkcs12: None,
+                tls_client_password: None,
             },
             Self::Wan => EndpointOptions {
                 connect_timeout_ms: Some(10_000),
@@ -153,6 +162,9 @@ impl ProfilePreset {
                 retry_max_delay_ms: Some(15_000),
                 tls_verify: Some(true),
                 tls_sni: None,
+                tls_ca_file: None,
+                tls_client_pkcs12: None,
+                tls_client_password: None,
             },
         }
     }
@@ -350,6 +362,22 @@ fn apply_profile(mut plan: EndpointPlan, profile: Option<ProfilePreset>) -> Endp
             .or(defaults.connect_timeout_ms);
         plan.options.retry = plan.options.retry.or(defaults.retry);
         plan.options.retry_delay_ms = plan.options.retry_delay_ms.or(defaults.retry_delay_ms);
+        plan.options.retry_backoff = plan.options.retry_backoff.or(defaults.retry_backoff);
+        plan.options.retry_max_delay_ms = plan
+            .options
+            .retry_max_delay_ms
+            .or(defaults.retry_max_delay_ms);
+        plan.options.tls_verify = plan.options.tls_verify.or(defaults.tls_verify);
+        plan.options.tls_sni = plan.options.tls_sni.or(defaults.tls_sni);
+        plan.options.tls_ca_file = plan.options.tls_ca_file.or(defaults.tls_ca_file);
+        plan.options.tls_client_pkcs12 = plan
+            .options
+            .tls_client_pkcs12
+            .or(defaults.tls_client_pkcs12);
+        plan.options.tls_client_password = plan
+            .options
+            .tls_client_password
+            .or(defaults.tls_client_password);
     }
     plan
 }
@@ -517,6 +545,9 @@ mod tests {
                 retry_max_delay_ms: None,
                 tls_verify: None,
                 tls_sni: None,
+                tls_ca_file: None,
+                tls_client_pkcs12: None,
+                tls_client_password: None,
             },
         };
         let got = apply_profile(plan, Some(ProfilePreset::Lan));

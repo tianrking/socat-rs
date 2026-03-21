@@ -73,6 +73,8 @@ socat --json --report-file ./run-report.json link --from tcp://127.0.0.1:9000 --
 - 英文总览：`README.md`
 - 中文详细状态与计划：`docs/FEATURE_STATUS.zh-CN.md`
 - 英文详细状态与计划：`docs/FEATURE_STATUS.en.md`
+- v1-ready（英文）：`docs/V1_READY.en.md`
+- v1-ready（中文）：`docs/V1_READY.zh-CN.md`
 - 兼容路线图：`docs/compatibility-roadmap.md`
 
 ## TLS 监听说明

@@ -39,6 +39,9 @@
   - `retry-max-delay`
   - `tls-verify`
   - `tls-sni`
+  - `tls-ca-file`
+  - `tls-client-pkcs12`
+  - `tls-client-password`
 - 内置 profile 预设：
   - `dev`
   - `prod`
