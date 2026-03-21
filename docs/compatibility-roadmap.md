@@ -1,0 +1,47 @@
+# Compatibility Roadmap
+
+## Principle
+
+Target is complete feature coverage of upstream `socat`, while exposing simpler commands for daily use.
+
+## Current baseline
+
+Implemented now:
+
+- Parser:
+  - legacy subset (`STDIO`, `TCP*`, `UDP*`, `SSL/OPENSSL*`, `EXEC/SYSTEM/SHELL`, `UNIX*`, `FILE/OPEN/GOPEN`)
+  - simple URI subset (`stdio://`, `tcp://`, `tcp-listen://`, `udp://`, `udp-listen://`, `tls://`, `tls-listen://`, `exec://`, `system://`, `shell://`, `unix://`, `unix-listen://`, `file://`)
+- Relay core: bidirectional async copy
+- CI: linux/macOS/windows
+
+## Phase 1: Transport completeness
+
+- UDP / UDP4 / UDP6 + datagram modes
+- OpenSSL/DTLS
+- SOCKS4/SOCKS4A/SOCKS5 and HTTP proxy paths
+- VSOCK and named-pipe equivalent mapping on Windows
+
+## Phase 2: Option engine parity
+
+- Typed option parser IR
+- Option groups + phase-aware option application
+- Alias normalization for legacy option names
+- JSON explain plan for each applied option
+
+## Phase 3: Process and tty stack
+
+- EXEC / SYSTEM / SHELL parity
+- PTY and termios model
+- Signal behavior parity (`-S`, graceful close, child handling)
+
+## Phase 4: Advanced kernel features
+
+- raw IP / multicast controls
+- interface/tun features
+- platform-specific capability checks and diagnostics
+
+## Phase 5: Compatibility validation
+
+- replay/adapt upstream `test.sh` as Rust integration test matrix
+- golden behavior snapshots for representative command sets
+- benchmark vs upstream for throughput and startup latency

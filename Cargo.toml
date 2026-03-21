@@ -1,0 +1,25 @@
+[package]
+name = "socat-rs"
+version = "0.1.0"
+edition = "2024"
+description = "Modern Rust rewrite of socat with compatibility-first design"
+license = "MIT"
+
+[[bin]]
+name = "socat"
+path = "src/main.rs"
+
+[[bin]]
+name = "socat-rs"
+path = "src/bin/socat-rs.rs"
+
+[workspace]
+members = [".", "crates/socat-rs-core", "crates/socat-rs-compat"]
+resolver = "3"
+
+[dependencies]
+anyhow = "1"
+socat-rs-core = { path = "crates/socat-rs-core" }
+
+[workspace.lints.rust]
+unsafe_code = "forbid"
