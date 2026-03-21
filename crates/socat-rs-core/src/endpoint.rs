@@ -38,6 +38,10 @@ pub async fn open(spec: EndpointSpec) -> Result<Box<dyn IoStream>, SocoreError> 
         }
         EndpointSpec::TlsConnect(addr) => open_tls_connect(addr).await,
         EndpointSpec::TlsListen(addr) => open_tls_listen(addr).await,
+        EndpointSpec::Socks5Connect { proxy, target } => open_socks5_connect(proxy, target).await,
+        EndpointSpec::HttpProxyConnect { proxy, target } => {
+            open_http_proxy_connect(proxy, target).await
+        }
         EndpointSpec::Exec(cmd) => open_process_stream(cmd, ProcessKind::Exec).await,
         EndpointSpec::System(cmd) => open_process_stream(cmd, ProcessKind::System).await,
         EndpointSpec::Shell(cmd) => open_process_stream(cmd, ProcessKind::Shell).await,
@@ -55,6 +59,108 @@ pub async fn open(spec: EndpointSpec) -> Result<Box<dyn IoStream>, SocoreError> 
         }
         EndpointSpec::Unsupported(name) => Err(SocoreError::UnsupportedEndpoint(name)),
     }
+}
+
+async fn open_socks5_connect(
+    proxy: String,
+    target: String,
+) -> Result<Box<dyn IoStream>, SocoreError> {
+    let mut stream = TcpStream::connect(proxy).await?;
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+    stream.write_all(&[0x05, 0x01, 0x00]).await?;
+    let mut method = [0_u8; 2];
+    stream.read_exact(&mut method).await?;
+    if method != [0x05, 0x00] {
+        return Err(SocoreError::UnsupportedEndpoint(
+            "socks5 proxy rejected no-auth method".to_string(),
+        ));
+    }
+
+    let (host, port) = split_host_port(&target)?;
+    let host_bytes = host.as_bytes();
+    if host_bytes.len() > 255 {
+        return Err(SocoreError::InvalidAddress(
+            "socks5 target host too long".to_string(),
+        ));
+    }
+    let mut req = Vec::with_capacity(6 + host_bytes.len());
+    req.extend_from_slice(&[0x05, 0x01, 0x00, 0x03, host_bytes.len() as u8]);
+    req.extend_from_slice(host_bytes);
+    req.extend_from_slice(&port.to_be_bytes());
+    stream.write_all(&req).await?;
+
+    let mut head = [0_u8; 4];
+    stream.read_exact(&mut head).await?;
+    if head[1] != 0x00 {
+        return Err(SocoreError::UnsupportedEndpoint(format!(
+            "socks5 connect failed with reply code {}",
+            head[1]
+        )));
+    }
+    let atyp = head[3];
+    match atyp {
+        0x01 => {
+            let mut rest = [0_u8; 6];
+            stream.read_exact(&mut rest).await?;
+        }
+        0x03 => {
+            let mut len = [0_u8; 1];
+            stream.read_exact(&mut len).await?;
+            let mut rest = vec![0_u8; usize::from(len[0]) + 2];
+            stream.read_exact(&mut rest).await?;
+        }
+        0x04 => {
+            let mut rest = [0_u8; 18];
+            stream.read_exact(&mut rest).await?;
+        }
+        _ => {
+            return Err(SocoreError::UnsupportedEndpoint(
+                "socks5 returned unsupported address type".to_string(),
+            ));
+        }
+    }
+
+    Ok(Box::new(stream))
+}
+
+async fn open_http_proxy_connect(
+    proxy: String,
+    target: String,
+) -> Result<Box<dyn IoStream>, SocoreError> {
+    let mut stream = TcpStream::connect(proxy).await?;
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+    let req = format!(
+        "CONNECT {target} HTTP/1.1\r\nHost: {target}\r\nProxy-Connection: Keep-Alive\r\n\r\n"
+    );
+    stream.write_all(req.as_bytes()).await?;
+
+    let mut response = Vec::new();
+    let mut buf = [0_u8; 1024];
+    loop {
+        let n = stream.read(&mut buf).await?;
+        if n == 0 {
+            break;
+        }
+        response.extend_from_slice(&buf[..n]);
+        if response.windows(4).any(|w| w == b"\\r\\n\\r\\n") {
+            break;
+        }
+        if response.len() > 16 * 1024 {
+            return Err(SocoreError::UnsupportedEndpoint(
+                "http proxy response header too large".to_string(),
+            ));
+        }
+    }
+    let resp_text = String::from_utf8_lossy(&response);
+    if !(resp_text.starts_with("HTTP/1.1 200") || resp_text.starts_with("HTTP/1.0 200")) {
+        return Err(SocoreError::UnsupportedEndpoint(format!(
+            "http proxy connect failed: {}",
+            resp_text.lines().next().unwrap_or("<empty response>")
+        )));
+    }
+    Ok(Box::new(stream))
 }
 
 async fn open_tls_connect(addr: String) -> Result<Box<dyn IoStream>, SocoreError> {
@@ -94,6 +200,26 @@ fn extract_host(addr: &str) -> String {
     }
     addr.rsplit_once(':')
         .map_or_else(|| addr.to_string(), |(host, _)| host.to_string())
+}
+
+fn split_host_port(target: &str) -> Result<(String, u16), SocoreError> {
+    if let Some(stripped) = target.strip_prefix('[')
+        && let Some((host, rest)) = stripped.split_once("]:")
+    {
+        let port = rest
+            .parse::<u16>()
+            .map_err(|_| SocoreError::InvalidAddress(format!("invalid target port in {target}")))?;
+        return Ok((host.to_string(), port));
+    }
+    if let Some((host, port_s)) = target.rsplit_once(':') {
+        let port = port_s
+            .parse::<u16>()
+            .map_err(|_| SocoreError::InvalidAddress(format!("invalid target port in {target}")))?;
+        return Ok((host.to_string(), port));
+    }
+    Err(SocoreError::InvalidAddress(format!(
+        "invalid target, expected host:port, got {target}"
+    )))
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -343,6 +469,7 @@ impl tokio::io::AsyncWrite for ProcessStream {
 #[cfg(test)]
 mod tests {
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    use tokio::net::TcpListener;
 
     use crate::spec::EndpointSpec;
 
@@ -367,5 +494,82 @@ mod tests {
         let mut out = [0_u8; 4];
         stream.read_exact(&mut out).await.expect("read");
         assert_eq!(&out, b"ping");
+    }
+
+    #[tokio::test]
+    async fn socks5_connect_handshake() {
+        let listener = TcpListener::bind("127.0.0.1:0").await.expect("bind");
+        let proxy_addr = listener.local_addr().expect("proxy addr");
+
+        tokio::spawn(async move {
+            let (mut socket, _) = listener.accept().await.expect("accept");
+            let mut buf = [0_u8; 3];
+            socket.read_exact(&mut buf).await.expect("read greeting");
+            socket
+                .write_all(&[0x05, 0x00])
+                .await
+                .expect("write method response");
+
+            let mut head = [0_u8; 5];
+            socket
+                .read_exact(&mut head)
+                .await
+                .expect("read connect head");
+            let domain_len = usize::from(head[4]);
+            let mut rest = vec![0_u8; domain_len + 2];
+            socket
+                .read_exact(&mut rest)
+                .await
+                .expect("read connect rest");
+
+            socket
+                .write_all(&[0x05, 0x00, 0x00, 0x01, 127, 0, 0, 1, 0x1f, 0x90])
+                .await
+                .expect("write connect ok");
+            socket.write_all(b"pong").await.expect("write payload");
+        });
+
+        let mut stream = super::open(EndpointSpec::Socks5Connect {
+            proxy: proxy_addr.to_string(),
+            target: "example.com:443".to_string(),
+        })
+        .await
+        .expect("open socks5");
+        let mut data = [0_u8; 4];
+        stream.read_exact(&mut data).await.expect("read payload");
+        assert_eq!(&data, b"pong");
+    }
+
+    #[tokio::test]
+    async fn http_proxy_connect_handshake() {
+        let listener = TcpListener::bind("127.0.0.1:0").await.expect("bind");
+        let proxy_addr = listener.local_addr().expect("proxy addr");
+
+        tokio::spawn(async move {
+            let (mut socket, _) = listener.accept().await.expect("accept");
+            let mut req = Vec::new();
+            let mut buf = [0_u8; 1024];
+            loop {
+                let n = socket.read(&mut buf).await.expect("read request");
+                if n == 0 {
+                    break;
+                }
+                req.extend_from_slice(&buf[..n]);
+                if req.windows(4).any(|w| w == b"\r\n\r\n") {
+                    break;
+                }
+            }
+            socket
+                .write_all(b"HTTP/1.1 200 Connection Established\r\n\r\n")
+                .await
+                .expect("write response");
+        });
+
+        let _stream = super::open(EndpointSpec::HttpProxyConnect {
+            proxy: proxy_addr.to_string(),
+            target: "example.com:443".to_string(),
+        })
+        .await
+        .expect("open http proxy");
     }
 }

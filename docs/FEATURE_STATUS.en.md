@@ -33,6 +33,8 @@ Core principles:
   - `tls-listen` requires:
     - `SOCAT_RS_TLS_PKCS12`
     - `SOCAT_RS_TLS_PASSWORD` (optional)
+- `socks5-connect`
+- `http-proxy-connect`
 - `exec` / `system` / `shell`
 - `unix-connect` / `unix-listen` (unix platforms)
 - `file`
@@ -136,4 +138,3 @@ Current constraints:
 - Option behavior compatibility is operationally equivalent
 - Upstream-style key regression suites pass reliably
 - Same command ergonomics across Linux/macOS/Windows
-

@@ -12,6 +12,8 @@ pub enum EndpointSpec {
     UdpListen(String),
     TlsConnect(String),
     TlsListen(String),
+    Socks5Connect { proxy: String, target: String },
+    HttpProxyConnect { proxy: String, target: String },
     Exec(String),
     System(String),
     Shell(String),
@@ -66,6 +68,27 @@ mod tests {
         let got = parse_simple_uri("tls://example.com:443").expect("parse simple tls");
         assert!(matches!(got, EndpointSpec::TlsConnect(addr) if addr == "example.com:443"));
     }
+
+    #[test]
+    fn parse_legacy_socks5() {
+        let got = parse_legacy("SOCKS5:127.0.0.1:1080:example.com:443").expect("parse socks5");
+        assert!(matches!(
+            got,
+            EndpointSpec::Socks5Connect { proxy, target }
+                if proxy == "127.0.0.1:1080" && target == "example.com:443"
+        ));
+    }
+
+    #[test]
+    fn parse_simple_http_proxy() {
+        let got = parse_simple_uri("http-proxy://127.0.0.1:8080?target=example.com:443")
+            .expect("parse http proxy");
+        assert!(matches!(
+            got,
+            EndpointSpec::HttpProxyConnect { proxy, target }
+                if proxy == "127.0.0.1:8080" && target == "example.com:443"
+        ));
+    }
 }
 
 pub fn parse_legacy(input: &str) -> Result<EndpointSpec, SocoreError> {
@@ -96,6 +119,8 @@ pub fn parse_legacy(input: &str) -> Result<EndpointSpec, SocoreError> {
             Ok(EndpointSpec::TlsConnect(value))
         }
         "SSL-LISTEN" | "SSL-L" | "OPENSSL-LISTEN" => Ok(EndpointSpec::TlsListen(value)),
+        "SOCKS5" | "SOCKS5-CONNECT" => parse_legacy_proxy4(&value, true),
+        "PROXY" | "PROXY-CONNECT" => parse_legacy_proxy4(&value, false),
         "EXEC" => Ok(EndpointSpec::Exec(value)),
         "SYSTEM" => Ok(EndpointSpec::System(value)),
         "SHELL" => Ok(EndpointSpec::Shell(value)),
@@ -157,6 +182,8 @@ pub fn parse_simple_uri(input: &str) -> Result<EndpointSpec, SocoreError> {
                 .ok_or_else(|| SocoreError::InvalidAddress(input.to_string()))?;
             Ok(EndpointSpec::TlsListen(format!("{host}:{port}")))
         }
+        "socks5" => parse_simple_proxy_uri(&url, true),
+        "http-proxy" | "proxy" => parse_simple_proxy_uri(&url, false),
         "exec" => Ok(EndpointSpec::Exec(command_from_url(&url)?)),
         "system" => Ok(EndpointSpec::System(command_from_url(&url)?)),
         "shell" => Ok(EndpointSpec::Shell(command_from_url(&url)?)),
@@ -164,6 +191,47 @@ pub fn parse_simple_uri(input: &str) -> Result<EndpointSpec, SocoreError> {
         "unix-listen" => Ok(EndpointSpec::UnixListen(PathBuf::from(url.path()))),
         "file" => Ok(EndpointSpec::File(PathBuf::from(url.path()))),
         other => Ok(EndpointSpec::Unsupported(other.to_string())),
+    }
+}
+
+fn parse_legacy_proxy4(value: &str, socks5: bool) -> Result<EndpointSpec, SocoreError> {
+    let parts: Vec<&str> = value.split(':').collect();
+    if parts.len() < 4 {
+        return Err(SocoreError::InvalidAddress(
+            "expected PROXY/SOCKS5 format: <proxy-host>:<proxy-port>:<target-host>:<target-port>"
+                .to_string(),
+        ));
+    }
+    let proxy = format!("{}:{}", parts[0], parts[1]);
+    let target = format!("{}:{}", parts[2], parts[3]);
+    if socks5 {
+        Ok(EndpointSpec::Socks5Connect { proxy, target })
+    } else {
+        Ok(EndpointSpec::HttpProxyConnect { proxy, target })
+    }
+}
+
+fn parse_simple_proxy_uri(url: &url::Url, socks5: bool) -> Result<EndpointSpec, SocoreError> {
+    let proxy_host = url
+        .host_str()
+        .ok_or_else(|| SocoreError::InvalidAddress("missing proxy host".to_string()))?;
+    let proxy_port = url
+        .port_or_known_default()
+        .ok_or_else(|| SocoreError::InvalidAddress("missing proxy port".to_string()))?;
+    let target = url
+        .query_pairs()
+        .find(|(k, _)| k == "target")
+        .map(|(_, v)| v.to_string())
+        .ok_or_else(|| {
+            SocoreError::InvalidAddress(
+                "missing target; use '?target=host:port' for proxy endpoints".to_string(),
+            )
+        })?;
+    let proxy = format!("{proxy_host}:{proxy_port}");
+    if socks5 {
+        Ok(EndpointSpec::Socks5Connect { proxy, target })
+    } else {
+        Ok(EndpointSpec::HttpProxyConnect { proxy, target })
     }
 }
 

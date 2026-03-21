@@ -33,6 +33,8 @@
   - `tls-listen` 需要：
     - `SOCAT_RS_TLS_PKCS12`
     - `SOCAT_RS_TLS_PASSWORD`（可为空）
+- `socks5-connect`
+- `http-proxy-connect`
 - `exec` / `system` / `shell`
 - `unix-connect` / `unix-listen`（unix平台）
 - `file`
@@ -136,4 +138,3 @@
 - option 兼容达到可运行等价（关键行为一致）
 - upstream 关键测试集迁移完成并稳定通过
 - Linux/macOS/Windows 三平台均具备一致命令体验
-

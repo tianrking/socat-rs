@@ -9,8 +9,8 @@ Target is complete feature coverage of upstream `socat`, while exposing simpler 
 Implemented now:
 
 - Parser:
-  - legacy subset (`STDIO`, `TCP*`, `UDP*`, `SSL/OPENSSL*`, `EXEC/SYSTEM/SHELL`, `UNIX*`, `FILE/OPEN/GOPEN`)
-  - simple URI subset (`stdio://`, `tcp://`, `tcp-listen://`, `udp://`, `udp-listen://`, `tls://`, `tls-listen://`, `exec://`, `system://`, `shell://`, `unix://`, `unix-listen://`, `file://`)
+  - legacy subset (`STDIO`, `TCP*`, `UDP*`, `SSL/OPENSSL*`, `SOCKS5*`, `PROXY*`, `EXEC/SYSTEM/SHELL`, `UNIX*`, `FILE/OPEN/GOPEN`)
+  - simple URI subset (`stdio://`, `tcp://`, `tcp-listen://`, `udp://`, `udp-listen://`, `tls://`, `tls-listen://`, `socks5://`, `http-proxy://`, `exec://`, `system://`, `shell://`, `unix://`, `unix-listen://`, `file://`)
 - Relay core: bidirectional async copy
 - CI: linux/macOS/windows
 
