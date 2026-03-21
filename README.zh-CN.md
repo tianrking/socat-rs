@@ -22,6 +22,10 @@
 - `unix-connect` / `unix-listen`（Unix）
 - `file`
 - `named-pipe-connect`（Windows，`npipe://` / `PIPE:` / `NPIPE:`）
+- 运行时选项引擎 v1：
+  - `connect-timeout`
+  - `retry`
+  - `retry-delay`
 
 ## 常用命令
 
@@ -32,9 +36,11 @@ socat TCP-LISTEN:8080 STDIO
 # 简化模式
 socat link --from tcp-listen://0.0.0.0:8080 --to stdio://
 socat link --from npipe://./pipe/socat-rs --to tcp://127.0.0.1:9000
+socat link --from "tcp://127.0.0.1:9000?connect-timeout=2s&retry=3&retry-delay=500ms" --to stdio://
 
 # 机器可读清单
 socat --json inventory
+socat --json explain "TCP:127.0.0.1:9000,connect-timeout=2000,retry=3,retry-delay=500ms"
 ```
 
 ## 文档

@@ -1,33 +1,55 @@
 use std::env;
 use std::net::Ipv4Addr;
 use std::path::PathBuf;
+use std::time::Duration;
 
 use native_tls::{Identity, TlsAcceptor, TlsConnector};
 use tokio::fs::OpenOptions;
 use tokio::io::{AsyncRead, AsyncWrite, stdin, stdout};
 use tokio::net::{TcpListener, TcpStream, UdpSocket};
 use tokio::process::{Child, ChildStdin, ChildStdout, Command};
+use tokio::time::sleep;
 use tokio_native_tls::{TlsAcceptor as TokioTlsAcceptor, TlsConnector as TokioTlsConnector};
 
 use crate::error::SocoreError;
-use crate::spec::{EndpointSpec, ProxyAuth};
+use crate::spec::{EndpointOptions, EndpointSpec, ProxyAuth};
 
 pub trait IoStream: AsyncRead + AsyncWrite + Unpin + Send {}
 impl<T> IoStream for T where T: AsyncRead + AsyncWrite + Unpin + Send {}
 
+#[cfg(test)]
 pub async fn open(spec: EndpointSpec) -> Result<Box<dyn IoStream>, SocoreError> {
+    open_with_options(spec, &EndpointOptions::default()).await
+}
+
+pub async fn open_with_options(
+    spec: EndpointSpec,
+    options: &EndpointOptions,
+) -> Result<Box<dyn IoStream>, SocoreError> {
     match spec {
         EndpointSpec::Stdio => Ok(Box::new(StdioEndpoint::new())),
-        EndpointSpec::TcpConnect(addr) => Ok(Box::new(TcpStream::connect(addr).await?)),
+        EndpointSpec::TcpConnect(addr) => {
+            with_connect_policy(options, || {
+                let addr = addr.clone();
+                async move { Ok(Box::new(TcpStream::connect(addr).await?) as Box<dyn IoStream>) }
+            })
+            .await
+        }
         EndpointSpec::TcpListen(addr) => {
             let listener = TcpListener::bind(addr).await?;
             let (stream, _) = listener.accept().await?;
             Ok(Box::new(stream))
         }
         EndpointSpec::UdpConnect(addr) => {
-            let socket = UdpSocket::bind("0.0.0.0:0").await?;
-            socket.connect(addr).await?;
-            Ok(Box::new(UdpStream::new(socket, Vec::new())))
+            with_connect_policy(options, || {
+                let addr = addr.clone();
+                async move {
+                    let socket = UdpSocket::bind("0.0.0.0:0").await?;
+                    socket.connect(addr).await?;
+                    Ok(Box::new(UdpStream::new(socket, Vec::new())) as Box<dyn IoStream>)
+                }
+            })
+            .await
         }
         EndpointSpec::UdpListen(addr) => {
             let socket = UdpSocket::bind(addr).await?;
@@ -37,28 +59,66 @@ pub async fn open(spec: EndpointSpec) -> Result<Box<dyn IoStream>, SocoreError> 
             socket.connect(peer).await?;
             Ok(Box::new(UdpStream::new(socket, first)))
         }
-        EndpointSpec::TlsConnect(addr) => open_tls_connect(addr).await,
+        EndpointSpec::TlsConnect(addr) => {
+            with_connect_policy(options, || {
+                let addr = addr.clone();
+                async move { open_tls_connect(addr).await }
+            })
+            .await
+        }
         EndpointSpec::TlsListen(addr) => open_tls_listen(addr).await,
         EndpointSpec::Socks4Connect { proxy, target } => {
-            open_socks4_connect(proxy, target, false).await
+            with_connect_policy(options, || {
+                let proxy = proxy.clone();
+                let target = target.clone();
+                async move { open_socks4_connect(proxy, target, false).await }
+            })
+            .await
         }
         EndpointSpec::Socks4aConnect { proxy, target } => {
-            open_socks4_connect(proxy, target, true).await
+            with_connect_policy(options, || {
+                let proxy = proxy.clone();
+                let target = target.clone();
+                async move { open_socks4_connect(proxy, target, true).await }
+            })
+            .await
         }
         EndpointSpec::Socks5Connect {
             proxy,
             target,
             auth,
-        } => open_socks5_connect(proxy, target, auth).await,
+        } => {
+            with_connect_policy(options, || {
+                let proxy = proxy.clone();
+                let target = target.clone();
+                let auth = auth.clone();
+                async move { open_socks5_connect(proxy, target, auth).await }
+            })
+            .await
+        }
         EndpointSpec::HttpProxyConnect {
             proxy,
             target,
             auth,
-        } => open_http_proxy_connect(proxy, target, auth).await,
+        } => {
+            with_connect_policy(options, || {
+                let proxy = proxy.clone();
+                let target = target.clone();
+                let auth = auth.clone();
+                async move { open_http_proxy_connect(proxy, target, auth).await }
+            })
+            .await
+        }
         EndpointSpec::Exec(cmd) => open_process_stream(cmd, ProcessKind::Exec).await,
         EndpointSpec::System(cmd) => open_process_stream(cmd, ProcessKind::System).await,
         EndpointSpec::Shell(cmd) => open_process_stream(cmd, ProcessKind::Shell).await,
-        EndpointSpec::UnixConnect(path) => open_unix_connect(path).await,
+        EndpointSpec::UnixConnect(path) => {
+            with_connect_policy(options, || {
+                let path = path.clone();
+                async move { open_unix_connect(path).await }
+            })
+            .await
+        }
         EndpointSpec::UnixListen(path) => open_unix_listen(path).await,
         EndpointSpec::File(path) => {
             let file = OpenOptions::new()
@@ -70,9 +130,53 @@ pub async fn open(spec: EndpointSpec) -> Result<Box<dyn IoStream>, SocoreError> 
                 .await?;
             Ok(Box::new(file))
         }
-        EndpointSpec::NamedPipe(path) => open_named_pipe(path).await,
+        EndpointSpec::NamedPipe(path) => {
+            with_connect_policy(options, || {
+                let path = path.clone();
+                async move { open_named_pipe(path).await }
+            })
+            .await
+        }
         EndpointSpec::Unsupported(name) => Err(SocoreError::UnsupportedEndpoint(name)),
     }
+}
+
+async fn with_connect_policy<T, F, Fut>(
+    options: &EndpointOptions,
+    mut operation: F,
+) -> Result<T, SocoreError>
+where
+    F: FnMut() -> Fut,
+    Fut: std::future::Future<Output = Result<T, SocoreError>>,
+{
+    let retry = options.retry.unwrap_or(0);
+    let attempts = retry.saturating_add(1);
+    let delay = Duration::from_millis(options.retry_delay_ms.unwrap_or(200));
+
+    for attempt in 1..=attempts {
+        let result = if let Some(timeout_ms) = options.connect_timeout_ms {
+            let timeout_duration = Duration::from_millis(timeout_ms);
+            match tokio::time::timeout(timeout_duration, operation()).await {
+                Ok(v) => v,
+                Err(_) => Err(SocoreError::Io(std::io::Error::new(
+                    std::io::ErrorKind::TimedOut,
+                    format!("connect timeout after {timeout_ms}ms"),
+                ))),
+            }
+        } else {
+            operation().await
+        };
+
+        match result {
+            Ok(v) => return Ok(v),
+            Err(_) if attempt < attempts => sleep(delay).await,
+            Err(err) => return Err(err),
+        }
+    }
+
+    Err(SocoreError::UnsupportedEndpoint(
+        "connect retry policy reached impossible state".to_string(),
+    ))
 }
 
 async fn open_socks4_connect(
@@ -585,10 +689,14 @@ impl tokio::io::AsyncWrite for ProcessStream {
 
 #[cfg(test)]
 mod tests {
+    use std::sync::Arc;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::time::Duration;
+
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
     use tokio::net::TcpListener;
 
-    use crate::spec::{EndpointSpec, ProxyAuth};
+    use crate::spec::{EndpointOptions, EndpointSpec, ProxyAuth};
 
     #[tokio::test]
     async fn udp_connect_roundtrip() {
@@ -856,5 +964,55 @@ mod tests {
             Err(err) => err,
         };
         assert!(err.to_string().contains("only available on Windows"));
+    }
+
+    #[tokio::test]
+    async fn connect_policy_retries_then_succeeds() {
+        let attempts = Arc::new(AtomicUsize::new(0));
+        let options = EndpointOptions {
+            connect_timeout_ms: None,
+            retry: Some(2),
+            retry_delay_ms: Some(1),
+        };
+
+        let value = super::with_connect_policy(&options, {
+            let attempts = attempts.clone();
+            move || {
+                let attempts = attempts.clone();
+                async move {
+                    let current = attempts.fetch_add(1, Ordering::SeqCst);
+                    if current < 2 {
+                        Err(crate::error::SocoreError::UnsupportedEndpoint(
+                            "not yet".to_string(),
+                        ))
+                    } else {
+                        Ok(42_u8)
+                    }
+                }
+            }
+        })
+        .await
+        .expect("retry success");
+
+        assert_eq!(value, 42);
+        assert_eq!(attempts.load(Ordering::SeqCst), 3);
+    }
+
+    #[tokio::test]
+    async fn connect_policy_timeout() {
+        let options = EndpointOptions {
+            connect_timeout_ms: Some(10),
+            retry: Some(0),
+            retry_delay_ms: Some(1),
+        };
+
+        let err = super::with_connect_policy(&options, || async {
+            tokio::time::sleep(Duration::from_millis(80)).await;
+            Ok::<_, crate::error::SocoreError>(())
+        })
+        .await
+        .expect_err("should timeout");
+
+        assert!(err.to_string().contains("timeout"));
     }
 }

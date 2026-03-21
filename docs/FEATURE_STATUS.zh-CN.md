@@ -23,6 +23,10 @@
   - `socat --json explain <address>`
   - `socat --json inventory`
 - `--dry-run` 解析演练模式
+- 运行时选项引擎 v1：
+  - `connect-timeout`（支持 ms / s 后缀）
+  - `retry`
+  - `retry-delay`（支持 ms / s 后缀）
 
 ### 2.2 端点能力（已可用）
 
@@ -112,6 +116,7 @@
 - 引入 typed option IR
 - 实现 group + phase 应用引擎
 - 建立 alias 归一化与冲突检测
+- 从 v1 运行时选项扩展到 legacy option 分组语义
 
 ### Phase E：全量验证与发布
 

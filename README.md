@@ -40,6 +40,10 @@ Current implemented endpoint families:
 - `unix-listen` (unix only)
 - `file`
 - `named-pipe-connect` (Windows, `npipe://` / `PIPE:` / `NPIPE:`)
+- runtime option engine v1:
+  - `connect-timeout`
+  - `retry`
+  - `retry-delay`
 
 ## Why two command styles
 
@@ -56,6 +60,7 @@ socat STDIO TCP:127.0.0.1:8080
 socat link --from tcp-listen://0.0.0.0:8080 --to stdio://
 socat link --from stdio:// --to tcp://127.0.0.1:8080
 socat link --from npipe://./pipe/socat-rs --to tcp://127.0.0.1:9000
+socat link --from "tcp://127.0.0.1:9000?connect-timeout=2s&retry=3&retry-delay=500ms" --to stdio://
 ```
 
 ## AI-friendly workflow
@@ -65,6 +70,7 @@ Use `--dry-run` and `--json` to make planning deterministic:
 ```bash
 socat --dry-run --json link --from tcp://127.0.0.1:80 --to stdio://
 socat --json explain "TCP-LISTEN:8080"
+socat --json explain "TCP:127.0.0.1:9000,connect-timeout=2000,retry=3,retry-delay=500ms"
 socat --json inventory
 ```
 

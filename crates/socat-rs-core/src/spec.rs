@@ -9,6 +9,19 @@ pub struct ProxyAuth {
     pub password: String,
 }
 
+#[derive(Debug, Clone, Serialize, Default, PartialEq, Eq)]
+pub struct EndpointOptions {
+    pub connect_timeout_ms: Option<u64>,
+    pub retry: Option<u32>,
+    pub retry_delay_ms: Option<u64>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct EndpointPlan {
+    pub endpoint: EndpointSpec,
+    pub options: EndpointOptions,
+}
+
 #[derive(Debug, Clone, Serialize)]
 pub enum EndpointSpec {
     Stdio,
@@ -54,9 +67,17 @@ enum ProxyKind {
     HttpProxy,
 }
 
+#[cfg(test)]
 pub fn parse_legacy(input: &str) -> Result<EndpointSpec, SocoreError> {
+    Ok(parse_legacy_with_options(input)?.endpoint)
+}
+
+pub fn parse_legacy_with_options(input: &str) -> Result<EndpointPlan, SocoreError> {
     if input == "-" || input.eq_ignore_ascii_case("STDIO") {
-        return Ok(EndpointSpec::Stdio);
+        return Ok(EndpointPlan {
+            endpoint: EndpointSpec::Stdio,
+            options: EndpointOptions::default(),
+        });
     }
 
     let (head, tail) = input
@@ -68,7 +89,7 @@ pub fn parse_legacy(input: &str) -> Result<EndpointSpec, SocoreError> {
     let value = parts.next().unwrap_or(tail).trim().to_string();
     let options: Vec<String> = parts.map(|s| s.trim().to_string()).collect();
 
-    match head.as_str() {
+    let endpoint = match head.as_str() {
         "TCP" | "TCP-CONNECT" | "TCP4" | "TCP4-CONNECT" | "TCP6" | "TCP6-CONNECT" => {
             Ok(EndpointSpec::TcpConnect(value))
         }
@@ -105,13 +126,22 @@ pub fn parse_legacy(input: &str) -> Result<EndpointSpec, SocoreError> {
         "OPEN" | "FILE" | "GOPEN" => Ok(EndpointSpec::File(PathBuf::from(value))),
         "NPIPE" | "PIPE" => Ok(EndpointSpec::NamedPipe(normalize_named_pipe(None, &value)?)),
         _ => Ok(EndpointSpec::Unsupported(head)),
-    }
+    }?;
+    Ok(EndpointPlan {
+        endpoint,
+        options: parse_endpoint_options(&options)?,
+    })
 }
 
+#[cfg(test)]
 pub fn parse_simple_uri(input: &str) -> Result<EndpointSpec, SocoreError> {
+    Ok(parse_simple_uri_with_options(input)?.endpoint)
+}
+
+pub fn parse_simple_uri_with_options(input: &str) -> Result<EndpointPlan, SocoreError> {
     let url = url::Url::parse(input).map_err(|_| SocoreError::InvalidAddress(input.to_string()))?;
 
-    match url.scheme() {
+    let endpoint = match url.scheme() {
         "stdio" => Ok(EndpointSpec::Stdio),
         "tcp" => {
             let host = url.host_str().unwrap_or("127.0.0.1");
@@ -169,7 +199,12 @@ pub fn parse_simple_uri(input: &str) -> Result<EndpointSpec, SocoreError> {
         "file" => Ok(EndpointSpec::File(PathBuf::from(url.path()))),
         "npipe" => Ok(EndpointSpec::NamedPipe(parse_simple_named_pipe(&url)?)),
         other => Ok(EndpointSpec::Unsupported(other.to_string())),
-    }
+    }?;
+    let options: Vec<String> = url.query_pairs().map(|(k, v)| format!("{k}={v}")).collect();
+    Ok(EndpointPlan {
+        endpoint,
+        options: parse_endpoint_options(&options)?,
+    })
 }
 
 fn parse_legacy_proxy(
@@ -262,6 +297,57 @@ fn parse_legacy_proxy_auth(options: &[String]) -> Option<ProxyAuth> {
     })
 }
 
+fn parse_endpoint_options(options: &[String]) -> Result<EndpointOptions, SocoreError> {
+    let mut out = EndpointOptions::default();
+    for opt in options {
+        let Some((k, v)) = opt.split_once('=') else {
+            continue;
+        };
+        let key = k.trim().to_ascii_lowercase();
+        let value = v.trim();
+        match key.as_str() {
+            "connect-timeout" | "connect_timeout" | "timeout" => {
+                out.connect_timeout_ms = Some(parse_duration_to_ms(value)?);
+            }
+            "retry" => {
+                let retry = value.parse::<u32>().map_err(|_| {
+                    SocoreError::InvalidAddress(format!("invalid retry value: {value}"))
+                })?;
+                out.retry = Some(retry);
+            }
+            "retry-delay" | "retry_delay" => {
+                out.retry_delay_ms = Some(parse_duration_to_ms(value)?);
+            }
+            _ => {}
+        }
+    }
+    Ok(out)
+}
+
+fn parse_duration_to_ms(value: &str) -> Result<u64, SocoreError> {
+    let v = value.trim();
+    if v.is_empty() {
+        return Err(SocoreError::InvalidAddress(
+            "duration value cannot be empty".to_string(),
+        ));
+    }
+    if let Some(ms) = v.strip_suffix("ms") {
+        return ms
+            .trim()
+            .parse::<u64>()
+            .map_err(|_| SocoreError::InvalidAddress(format!("invalid duration value: {value}")));
+    }
+    if let Some(sec) = v.strip_suffix('s') {
+        let sec = sec
+            .trim()
+            .parse::<u64>()
+            .map_err(|_| SocoreError::InvalidAddress(format!("invalid duration value: {value}")))?;
+        return Ok(sec.saturating_mul(1000));
+    }
+    v.parse::<u64>()
+        .map_err(|_| SocoreError::InvalidAddress(format!("invalid duration value: {value}")))
+}
+
 fn command_from_url(url: &url::Url) -> Result<String, SocoreError> {
     if let Some((_, cmd)) = url.query_pairs().find(|(k, _)| k == "cmd") {
         let cmd = cmd.trim();
@@ -311,7 +397,10 @@ fn normalize_named_pipe(host: Option<&str>, path_or_value: &str) -> Result<Strin
 
 #[cfg(test)]
 mod tests {
-    use super::{EndpointSpec, ProxyAuth, parse_legacy, parse_simple_uri};
+    use super::{
+        EndpointOptions, EndpointSpec, ProxyAuth, parse_legacy, parse_legacy_with_options,
+        parse_simple_uri, parse_simple_uri_with_options,
+    };
 
     #[test]
     fn parse_legacy_stdio() {
@@ -447,5 +536,43 @@ mod tests {
     fn parse_simple_named_pipe() {
         let got = parse_simple_uri("npipe://./pipe/socat-rs").expect("parse npipe uri");
         assert!(matches!(got, EndpointSpec::NamedPipe(path) if path == r"\\.\pipe\socat-rs"));
+    }
+
+    #[test]
+    fn parse_legacy_with_runtime_options() {
+        let plan = parse_legacy_with_options("TCP:127.0.0.1:8080,retry=2,retry-delay=150ms")
+            .expect("parse with options");
+        assert!(matches!(
+            plan.endpoint,
+            EndpointSpec::TcpConnect(addr) if addr == "127.0.0.1:8080"
+        ));
+        assert_eq!(
+            plan.options,
+            EndpointOptions {
+                connect_timeout_ms: None,
+                retry: Some(2),
+                retry_delay_ms: Some(150),
+            }
+        );
+    }
+
+    #[test]
+    fn parse_simple_uri_with_runtime_options() {
+        let plan = parse_simple_uri_with_options(
+            "tcp://127.0.0.1:8080?connect-timeout=2s&retry=3&retry-delay=500ms",
+        )
+        .expect("parse simple options");
+        assert!(matches!(
+            plan.endpoint,
+            EndpointSpec::TcpConnect(addr) if addr == "127.0.0.1:8080"
+        ));
+        assert_eq!(
+            plan.options,
+            EndpointOptions {
+                connect_timeout_ms: Some(2000),
+                retry: Some(3),
+                retry_delay_ms: Some(500),
+            }
+        );
     }
 }

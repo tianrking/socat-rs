@@ -23,6 +23,10 @@ Core principles:
   - `socat --json explain <address>`
   - `socat --json inventory`
 - `--dry-run` parse-and-plan mode
+- Runtime option engine v1:
+  - `connect-timeout` (ms / `s` / `ms`)
+  - `retry`
+  - `retry-delay` (ms / `s` / `ms`)
 
 ### 2.2 Endpoint Capabilities Available
 
@@ -112,6 +116,7 @@ Current constraints:
 - Typed option IR
 - Group + phase application engine
 - Alias normalization and conflict detection
+- Expand from v1 runtime options to legacy option groups
 
 ### Phase E: Validation and release hardening
 

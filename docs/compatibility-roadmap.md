@@ -13,6 +13,10 @@ Implemented now:
   - simple URI subset (`stdio://`, `tcp://`, `tcp-listen://`, `udp://`, `udp-listen://`, `tls://`, `tls-listen://`, `socks4://`, `socks4a://`, `socks5://`, `http-proxy://`, `exec://`, `system://`, `shell://`, `unix://`, `unix-listen://`, `file://`, `npipe://`)
 - Relay core: bidirectional async copy
 - CI: linux/macOS/windows
+- Runtime option engine v1:
+  - `connect-timeout`
+  - `retry`
+  - `retry-delay`
 
 ## Phase 1: Transport completeness
 

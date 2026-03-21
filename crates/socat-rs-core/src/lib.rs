@@ -8,6 +8,7 @@ use clap::{Args, Parser, Subcommand};
 use serde::Serialize;
 
 use crate::error::SocoreError;
+use crate::spec::EndpointPlan;
 
 #[derive(Debug, Parser)]
 #[command(name = "socat")]
@@ -41,8 +42,8 @@ struct LinkArgs {
 #[derive(Debug, Serialize)]
 struct PlanOutput {
     mode: &'static str,
-    from: String,
-    to: String,
+    from: EndpointPlan,
+    to: EndpointPlan,
 }
 
 pub fn run() -> anyhow::Result<()> {
@@ -65,41 +66,41 @@ async fn dispatch(cli: Cli) -> Result<(), SocoreError> {
             Ok(())
         }
         (Some(Command::Explain { address }), _) => {
-            let spec = if address.contains("://") {
-                spec::parse_simple_uri(&address)?
+            let plan = if address.contains("://") {
+                spec::parse_simple_uri_with_options(&address)?
             } else {
-                spec::parse_legacy(&address)?
+                spec::parse_legacy_with_options(&address)?
             };
-            emit(cli.json, &spec)?;
+            emit(cli.json, &plan)?;
             Ok(())
         }
         (Some(Command::Link(args)), _) => {
-            let left = spec::parse_simple_uri(&args.from)?;
-            let right = spec::parse_simple_uri(&args.to)?;
+            let left = spec::parse_simple_uri_with_options(&args.from)?;
+            let right = spec::parse_simple_uri_with_options(&args.to)?;
             if cli.dry_run {
                 let out = PlanOutput {
                     mode: "simple",
-                    from: format!("{left:?}"),
-                    to: format!("{right:?}"),
+                    from: left,
+                    to: right,
                 };
                 emit(cli.json, &out)?;
                 return Ok(());
             }
-            relay::bridge(left, right).await
+            relay::bridge_with_plans(left, right).await
         }
         (None, [left, right]) => {
-            let left = spec::parse_legacy(left)?;
-            let right = spec::parse_legacy(right)?;
+            let left = spec::parse_legacy_with_options(left)?;
+            let right = spec::parse_legacy_with_options(right)?;
             if cli.dry_run {
                 let out = PlanOutput {
                     mode: "legacy",
-                    from: format!("{left:?}"),
-                    to: format!("{right:?}"),
+                    from: left,
+                    to: right,
                 };
                 emit(cli.json, &out)?;
                 return Ok(());
             }
-            relay::bridge(left, right).await
+            relay::bridge_with_plans(left, right).await
         }
         _ => Err(SocoreError::InvalidAddress(
             "expected either: `socat <addr1> <addr2>` or `socat link --from ... --to ...`"
