@@ -25,95 +25,6 @@ pub enum EndpointSpec {
     Unsupported(String),
 }
 
-#[cfg(test)]
-mod tests {
-    use super::{EndpointSpec, parse_legacy, parse_simple_uri};
-
-    #[test]
-    fn parse_legacy_stdio() {
-        let got = parse_legacy("-").expect("parse legacy stdio");
-        assert!(matches!(got, EndpointSpec::Stdio));
-    }
-
-    #[test]
-    fn parse_legacy_tcp_listen() {
-        let got = parse_legacy("TCP-LISTEN:8080").expect("parse legacy tcp listen");
-        assert!(matches!(got, EndpointSpec::TcpListen(addr) if addr == "8080"));
-    }
-
-    #[test]
-    fn parse_simple_tcp() {
-        let got = parse_simple_uri("tcp://127.0.0.1:1234").expect("parse simple tcp");
-        assert!(matches!(got, EndpointSpec::TcpConnect(addr) if addr == "127.0.0.1:1234"));
-    }
-
-    #[test]
-    fn parse_legacy_udp() {
-        let got = parse_legacy("UDP:127.0.0.1:9999").expect("parse legacy udp");
-        assert!(matches!(got, EndpointSpec::UdpConnect(addr) if addr == "127.0.0.1:9999"));
-    }
-
-    #[test]
-    fn parse_simple_udp_listen() {
-        let got = parse_simple_uri("udp-listen://0.0.0.0:9999").expect("parse simple udp listen");
-        assert!(matches!(got, EndpointSpec::UdpListen(addr) if addr == "0.0.0.0:9999"));
-    }
-
-    #[test]
-    fn parse_legacy_exec() {
-        let got = parse_legacy("EXEC:echo hello,pty").expect("parse legacy exec");
-        assert!(matches!(got, EndpointSpec::Exec(cmd) if cmd == "echo hello"));
-    }
-
-    #[test]
-    fn parse_simple_tls() {
-        let got = parse_simple_uri("tls://example.com:443").expect("parse simple tls");
-        assert!(matches!(got, EndpointSpec::TlsConnect(addr) if addr == "example.com:443"));
-    }
-
-    #[test]
-    fn parse_legacy_socks5() {
-        let got = parse_legacy("SOCKS5:127.0.0.1:1080:example.com:443").expect("parse socks5");
-        assert!(matches!(
-            got,
-            EndpointSpec::Socks5Connect { proxy, target }
-                if proxy == "127.0.0.1:1080" && target == "example.com:443"
-        ));
-    }
-
-    #[test]
-    fn parse_simple_http_proxy() {
-        let got = parse_simple_uri("http-proxy://127.0.0.1:8080?target=example.com:443")
-            .expect("parse http proxy");
-        assert!(matches!(
-            got,
-            EndpointSpec::HttpProxyConnect { proxy, target }
-                if proxy == "127.0.0.1:8080" && target == "example.com:443"
-        ));
-    }
-
-    #[test]
-    fn parse_legacy_socks4() {
-        let got = parse_legacy("SOCKS4:127.0.0.1:1080:1.2.3.4:443").expect("parse socks4");
-        assert!(matches!(
-            got,
-            EndpointSpec::Socks4Connect { proxy, target }
-                if proxy == "127.0.0.1:1080" && target == "1.2.3.4:443"
-        ));
-    }
-
-    #[test]
-    fn parse_simple_socks4a() {
-        let got =
-            parse_simple_uri("socks4a://127.0.0.1:1080?target=example.com:443").expect("parse");
-        assert!(matches!(
-            got,
-            EndpointSpec::Socks4aConnect { proxy, target }
-                if proxy == "127.0.0.1:1080" && target == "example.com:443"
-        ));
-    }
-}
-
 pub fn parse_legacy(input: &str) -> Result<EndpointSpec, SocoreError> {
     if input == "-" || input.eq_ignore_ascii_case("STDIO") {
         return Ok(EndpointSpec::Stdio);
@@ -324,4 +235,93 @@ fn command_from_url(url: &url::Url) -> Result<String, SocoreError> {
     Err(SocoreError::InvalidAddress(
         "missing command; use query `?cmd=...` or path segment".to_string(),
     ))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{EndpointSpec, parse_legacy, parse_simple_uri};
+
+    #[test]
+    fn parse_legacy_stdio() {
+        let got = parse_legacy("-").expect("parse legacy stdio");
+        assert!(matches!(got, EndpointSpec::Stdio));
+    }
+
+    #[test]
+    fn parse_legacy_tcp_listen() {
+        let got = parse_legacy("TCP-LISTEN:8080").expect("parse legacy tcp listen");
+        assert!(matches!(got, EndpointSpec::TcpListen(addr) if addr == "8080"));
+    }
+
+    #[test]
+    fn parse_simple_tcp() {
+        let got = parse_simple_uri("tcp://127.0.0.1:1234").expect("parse simple tcp");
+        assert!(matches!(got, EndpointSpec::TcpConnect(addr) if addr == "127.0.0.1:1234"));
+    }
+
+    #[test]
+    fn parse_legacy_udp() {
+        let got = parse_legacy("UDP:127.0.0.1:9999").expect("parse legacy udp");
+        assert!(matches!(got, EndpointSpec::UdpConnect(addr) if addr == "127.0.0.1:9999"));
+    }
+
+    #[test]
+    fn parse_simple_udp_listen() {
+        let got = parse_simple_uri("udp-listen://0.0.0.0:9999").expect("parse simple udp listen");
+        assert!(matches!(got, EndpointSpec::UdpListen(addr) if addr == "0.0.0.0:9999"));
+    }
+
+    #[test]
+    fn parse_legacy_exec() {
+        let got = parse_legacy("EXEC:echo hello,pty").expect("parse legacy exec");
+        assert!(matches!(got, EndpointSpec::Exec(cmd) if cmd == "echo hello"));
+    }
+
+    #[test]
+    fn parse_simple_tls() {
+        let got = parse_simple_uri("tls://example.com:443").expect("parse simple tls");
+        assert!(matches!(got, EndpointSpec::TlsConnect(addr) if addr == "example.com:443"));
+    }
+
+    #[test]
+    fn parse_legacy_socks5() {
+        let got = parse_legacy("SOCKS5:127.0.0.1:1080:example.com:443").expect("parse socks5");
+        assert!(matches!(
+            got,
+            EndpointSpec::Socks5Connect { proxy, target }
+                if proxy == "127.0.0.1:1080" && target == "example.com:443"
+        ));
+    }
+
+    #[test]
+    fn parse_simple_http_proxy() {
+        let got = parse_simple_uri("http-proxy://127.0.0.1:8080?target=example.com:443")
+            .expect("parse http proxy");
+        assert!(matches!(
+            got,
+            EndpointSpec::HttpProxyConnect { proxy, target }
+                if proxy == "127.0.0.1:8080" && target == "example.com:443"
+        ));
+    }
+
+    #[test]
+    fn parse_legacy_socks4() {
+        let got = parse_legacy("SOCKS4:127.0.0.1:1080:1.2.3.4:443").expect("parse socks4");
+        assert!(matches!(
+            got,
+            EndpointSpec::Socks4Connect { proxy, target }
+                if proxy == "127.0.0.1:1080" && target == "1.2.3.4:443"
+        ));
+    }
+
+    #[test]
+    fn parse_simple_socks4a() {
+        let got =
+            parse_simple_uri("socks4a://127.0.0.1:1080?target=example.com:443").expect("parse");
+        assert!(matches!(
+            got,
+            EndpointSpec::Socks4aConnect { proxy, target }
+                if proxy == "127.0.0.1:1080" && target == "example.com:443"
+        ));
+    }
 }
