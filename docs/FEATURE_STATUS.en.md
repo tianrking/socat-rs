@@ -22,6 +22,8 @@ Core principles:
 - Planning and validation commands:
   - `socat plan --from <addr> --to <addr>`
   - `socat validate --from <addr> --to <addr>`
+- Tunnel command:
+  - `socat tunnel --via <proxy-uri> --to <host:port> [--from stdio://]`
 - Introspection commands:
   - `socat --json explain <address>`
   - `socat --json inventory`

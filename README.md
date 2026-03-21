@@ -17,6 +17,7 @@ This repository already includes:
 - Simpler path: `socat link --from <URI> --to <URI>`
 - Planning path: `socat plan --from <ADDR> --to <ADDR>`
 - Validation path: `socat validate --from <ADDR> --to <ADDR>`
+- Tunnel path: `socat tunnel --via <proxy-uri> --to <host:port> [--from stdio://]`
 - CI for Linux/macOS/Windows
 - Legacy inventory extraction script from upstream `socat` source
 
@@ -71,6 +72,8 @@ socat link --from stdio:// --to tcp://127.0.0.1:8080
 socat link --from npipe://./pipe/socat-rs --to tcp://127.0.0.1:9000
 socat link --from "tcp://127.0.0.1:9000?connect-timeout=2s&retry=3&retry-delay=500ms" --to stdio://
 socat link --profile prod --from tcp://example.com:443 --to stdio://
+socat tunnel --via socks5://127.0.0.1:1080 --to example.com:443
+socat tunnel --from stdio:// --via http-proxy://u:p@127.0.0.1:8080 --to api.example.com:443
 ```
 
 ## AI-friendly workflow

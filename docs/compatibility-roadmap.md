@@ -20,6 +20,7 @@ Implemented now:
 - Friendly CLI planning path:
   - `plan` and `validate` commands with JSON output
   - built-in `dev/prod/lan/wan` profile defaults
+  - `tunnel` command for one-line proxy chains
 - Observability baseline:
   - JSON run-report on executed links
   - Prometheus metrics endpoint (`--metrics-bind`)

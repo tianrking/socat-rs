@@ -22,6 +22,8 @@
 - 计划与校验命令：
   - `socat plan --from <addr> --to <addr>`
   - `socat validate --from <addr> --to <addr>`
+- 隧道命令：
+  - `socat tunnel --via <proxy-uri> --to <host:port> [--from stdio://]`
 - 解释与清点：
   - `socat --json explain <address>`
   - `socat --json inventory`

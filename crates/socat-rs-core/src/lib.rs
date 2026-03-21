@@ -42,6 +42,7 @@ struct Cli {
 #[derive(Debug, Subcommand)]
 enum Command {
     Link(LinkArgs),
+    Tunnel(TunnelArgs),
     Plan(LinkArgs),
     Validate(LinkArgs),
     Explain { address: String },
@@ -53,6 +54,16 @@ struct LinkArgs {
     #[arg(long)]
     from: String,
     #[arg(long)]
+    to: String,
+}
+
+#[derive(Debug, Args)]
+struct TunnelArgs {
+    #[arg(long, default_value = "stdio://")]
+    from: String,
+    #[arg(long)]
+    via: String,
+    #[arg(long, help = "final tunnel target in host:port form")]
     to: String,
 }
 
@@ -182,6 +193,23 @@ async fn dispatch(cli: Cli) -> Result<(), SocoreError> {
             }
             run_link_and_maybe_emit_report("simple", profile, left, right, cli.json).await
         }
+        (Some(Command::Tunnel(args)), _) => {
+            let left = apply_profile(parse_endpoint_plan(&args.from)?, profile);
+            let via = ensure_tunnel_via_has_target(&args.via, &args.to)?;
+            let right = apply_profile(parse_endpoint_plan(&via)?, profile);
+            if cli.dry_run {
+                let out = PlanOutput {
+                    mode: "tunnel",
+                    profile: profile.map(|p| p.as_str().to_string()),
+                    valid: true,
+                    from: left,
+                    to: right,
+                };
+                emit(cli.json, &out)?;
+                return Ok(());
+            }
+            run_link_and_maybe_emit_report("tunnel", profile, left, right, cli.json).await
+        }
         (None, [left, right]) => {
             let left = apply_profile(spec::parse_legacy_with_options(left)?, profile);
             let right = apply_profile(spec::parse_legacy_with_options(right)?, profile);
@@ -264,6 +292,35 @@ fn apply_profile(mut plan: EndpointPlan, profile: Option<ProfilePreset>) -> Endp
     plan
 }
 
+fn ensure_tunnel_via_has_target(via: &str, to: &str) -> Result<String, SocoreError> {
+    let mut url = url::Url::parse(via).map_err(|_| SocoreError::InvalidAddress(via.to_string()))?;
+    let is_proxy = matches!(
+        url.scheme(),
+        "socks4" | "socks4a" | "socks5" | "http-proxy" | "proxy"
+    );
+    if !is_proxy {
+        return Err(SocoreError::InvalidAddress(
+            "tunnel --via currently supports socks4/socks4a/socks5/http-proxy/proxy schemes"
+                .to_string(),
+        ));
+    }
+
+    let mut pairs: Vec<(String, String)> = url
+        .query_pairs()
+        .map(|(k, v)| (k.to_string(), v.to_string()))
+        .collect();
+    pairs.retain(|(k, _)| k != "target");
+    pairs.push(("target".to_string(), to.to_string()));
+    url.set_query(None);
+    {
+        let mut q = url.query_pairs_mut();
+        for (k, v) in pairs {
+            q.append_pair(&k, &v);
+        }
+    }
+    Ok(url.into())
+}
+
 async fn run_link_and_maybe_emit_report(
     mode: &'static str,
     profile: Option<ProfilePreset>,
@@ -300,7 +357,10 @@ async fn run_link_and_maybe_emit_report(
 mod tests {
     use crate::spec::{EndpointOptions, EndpointSpec};
 
-    use super::{EndpointPlan, ProfilePreset, apply_profile, parse_endpoint_plan};
+    use super::{
+        EndpointPlan, ProfilePreset, apply_profile, ensure_tunnel_via_has_target,
+        parse_endpoint_plan,
+    };
 
     #[test]
     fn profile_fills_missing_options() {
@@ -325,5 +385,12 @@ mod tests {
 
         let simple = parse_endpoint_plan("tcp://127.0.0.1:8080").expect("simple");
         assert!(matches!(simple.endpoint, EndpointSpec::TcpConnect(_)));
+    }
+
+    #[test]
+    fn tunnel_via_injects_target() {
+        let via = ensure_tunnel_via_has_target("socks5://u:p@127.0.0.1:1080", "example.com:443")
+            .expect("inject target");
+        assert!(via.contains("target=example.com%3A443"));
     }
 }
