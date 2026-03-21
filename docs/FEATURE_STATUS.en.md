@@ -24,6 +24,7 @@ Core principles:
   - `socat validate --from <addr> --to <addr>`
 - Tunnel command:
   - `socat tunnel --via <proxy-uri> --to <host:port> [--from stdio://]`
+  - supports multi-hop chains with repeated `--via`
 - Introspection commands:
   - `socat --json explain <address>`
   - `socat --json inventory`

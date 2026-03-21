@@ -10,7 +10,7 @@ use serde::Serialize;
 use std::time::Instant;
 
 use crate::error::SocoreError;
-use crate::spec::{EndpointOptions, EndpointPlan};
+use crate::spec::{EndpointOptions, EndpointPlan, EndpointSpec, ProxyType};
 
 #[derive(Debug, Parser)]
 #[command(name = "socat")]
@@ -61,8 +61,8 @@ struct LinkArgs {
 struct TunnelArgs {
     #[arg(long, default_value = "stdio://")]
     from: String,
-    #[arg(long)]
-    via: String,
+    #[arg(long, required = true, num_args = 1.., action = clap::ArgAction::Append)]
+    via: Vec<String>,
     #[arg(long, help = "final tunnel target in host:port form")]
     to: String,
 }
@@ -211,8 +211,14 @@ async fn dispatch(cli: Cli) -> Result<(), SocoreError> {
         }
         (Some(Command::Tunnel(args)), _) => {
             let left = apply_profile(parse_endpoint_plan(&args.from)?, profile);
-            let via = ensure_tunnel_via_has_target(&args.via, &args.to)?;
-            let right = apply_profile(parse_endpoint_plan(&via)?, profile);
+            let right_endpoint = build_tunnel_endpoint(&args.via, &args.to)?;
+            let right = apply_profile(
+                EndpointPlan {
+                    endpoint: right_endpoint,
+                    options: EndpointOptions::default(),
+                },
+                profile,
+            );
             if cli.dry_run {
                 let out = PlanOutput {
                     mode: "tunnel",
@@ -337,6 +343,48 @@ fn ensure_tunnel_via_has_target(via: &str, to: &str) -> Result<String, SocoreErr
     Ok(url.into())
 }
 
+fn build_tunnel_endpoint(vias: &[String], target: &str) -> Result<EndpointSpec, SocoreError> {
+    let mut hops: Vec<String> = Vec::new();
+    for via in vias {
+        for piece in via.split(',') {
+            let trimmed = piece.trim();
+            if !trimmed.is_empty() {
+                hops.push(trimmed.to_string());
+            }
+        }
+    }
+    if hops.is_empty() {
+        return Err(SocoreError::InvalidAddress(
+            "tunnel requires at least one --via hop".to_string(),
+        ));
+    }
+
+    if hops.len() == 1 {
+        let via = ensure_tunnel_via_has_target(&hops[0], target)?;
+        return Ok(parse_endpoint_plan(&via)?.endpoint);
+    }
+
+    let mut parsed = Vec::with_capacity(hops.len());
+    for via in &hops {
+        parsed.push(spec::parse_proxy_hop_uri(via)?);
+    }
+    if matches!(parsed.last().map(|h| h.kind), Some(ProxyType::Socks4)) {
+        let (host, _) = target.rsplit_once(':').ok_or_else(|| {
+            SocoreError::InvalidAddress(format!("invalid tunnel target host:port: {target}"))
+        })?;
+        if host.parse::<std::net::Ipv4Addr>().is_err() {
+            return Err(SocoreError::InvalidAddress(
+                "last SOCKS4 hop requires IPv4 target; use socks4a or socks5 for domain targets"
+                    .to_string(),
+            ));
+        }
+    }
+    Ok(EndpointSpec::ProxyChain {
+        hops: parsed,
+        target: target.to_string(),
+    })
+}
+
 async fn run_link_and_maybe_emit_report(
     mode: &'static str,
     profile: Option<ProfilePreset>,
@@ -374,8 +422,8 @@ mod tests {
     use crate::spec::{EndpointOptions, EndpointSpec};
 
     use super::{
-        EndpointPlan, ProfilePreset, apply_profile, ensure_tunnel_via_has_target,
-        parse_endpoint_plan,
+        EndpointPlan, ProfilePreset, apply_profile, build_tunnel_endpoint,
+        ensure_tunnel_via_has_target, parse_endpoint_plan,
     };
 
     #[test]
@@ -412,5 +460,20 @@ mod tests {
         let via = ensure_tunnel_via_has_target("socks5://u:p@127.0.0.1:1080", "example.com:443")
             .expect("inject target");
         assert!(via.contains("target=example.com%3A443"));
+    }
+
+    #[test]
+    fn tunnel_multi_hop_builds_proxy_chain() {
+        let endpoint = build_tunnel_endpoint(
+            &[
+                "socks5://127.0.0.1:1080".to_string(),
+                "http-proxy://127.0.0.1:8080".to_string(),
+            ],
+            "example.com:443",
+        )
+        .expect("build endpoint");
+        assert!(
+            matches!(endpoint, EndpointSpec::ProxyChain { hops, target } if hops.len() == 2 && target == "example.com:443")
+        );
     }
 }

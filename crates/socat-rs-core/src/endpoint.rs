@@ -12,7 +12,7 @@ use tokio::time::sleep;
 use tokio_native_tls::{TlsAcceptor as TokioTlsAcceptor, TlsConnector as TokioTlsConnector};
 
 use crate::error::SocoreError;
-use crate::spec::{EndpointOptions, EndpointSpec, ProxyAuth, RetryBackoff};
+use crate::spec::{EndpointOptions, EndpointSpec, ProxyAuth, ProxyHop, ProxyType, RetryBackoff};
 
 pub trait IoStream: AsyncRead + AsyncWrite + Unpin + Send {}
 impl<T> IoStream for T where T: AsyncRead + AsyncWrite + Unpin + Send {}
@@ -110,6 +110,14 @@ pub async fn open_with_options(
             })
             .await
         }
+        EndpointSpec::ProxyChain { hops, target } => {
+            with_connect_policy(options, || {
+                let hops = hops.clone();
+                let target = target.clone();
+                async move { open_proxy_chain(hops, target).await }
+            })
+            .await
+        }
         EndpointSpec::Exec(cmd) => open_process_stream(cmd, ProcessKind::Exec).await,
         EndpointSpec::System(cmd) => open_process_stream(cmd, ProcessKind::System).await,
         EndpointSpec::Shell(cmd) => open_process_stream(cmd, ProcessKind::Shell).await,
@@ -198,37 +206,7 @@ async fn open_socks4_connect(
     use_4a: bool,
 ) -> Result<Box<dyn IoStream>, SocoreError> {
     let mut stream = TcpStream::connect(proxy).await?;
-    use tokio::io::{AsyncReadExt, AsyncWriteExt};
-
-    let (host, port) = split_host_port(&target)?;
-    let mut req = Vec::new();
-    req.push(0x04);
-    req.push(0x01);
-    req.extend_from_slice(&port.to_be_bytes());
-    if use_4a {
-        req.extend_from_slice(&[0, 0, 0, 1]);
-        req.push(0x00);
-        req.extend_from_slice(host.as_bytes());
-        req.push(0x00);
-    } else {
-        let ip = host.parse::<Ipv4Addr>().map_err(|_| {
-            SocoreError::InvalidAddress(
-                "SOCKS4 requires IPv4 target; use SOCKS4A for domain targets".to_string(),
-            )
-        })?;
-        req.extend_from_slice(&ip.octets());
-        req.push(0x00);
-    }
-
-    stream.write_all(&req).await?;
-    let mut resp = [0_u8; 8];
-    stream.read_exact(&mut resp).await?;
-    if resp[1] != 0x5a {
-        return Err(SocoreError::UnsupportedEndpoint(format!(
-            "socks4 connect failed with reply code {}",
-            resp[1]
-        )));
-    }
+    socks4_handshake(&mut stream, &target, use_4a).await?;
     Ok(Box::new(stream))
 }
 
@@ -238,6 +216,55 @@ async fn open_socks5_connect(
     auth: Option<ProxyAuth>,
 ) -> Result<Box<dyn IoStream>, SocoreError> {
     let mut stream = TcpStream::connect(proxy).await?;
+    socks5_handshake(&mut stream, &target, auth).await?;
+    Ok(Box::new(stream))
+}
+
+async fn open_http_proxy_connect(
+    proxy: String,
+    target: String,
+    auth: Option<ProxyAuth>,
+) -> Result<Box<dyn IoStream>, SocoreError> {
+    let mut stream = TcpStream::connect(proxy).await?;
+    http_proxy_handshake(&mut stream, &target, auth).await?;
+    Ok(Box::new(stream))
+}
+
+async fn open_proxy_chain(
+    hops: Vec<ProxyHop>,
+    target: String,
+) -> Result<Box<dyn IoStream>, SocoreError> {
+    if hops.is_empty() {
+        return Err(SocoreError::InvalidAddress(
+            "proxy chain requires at least one hop".to_string(),
+        ));
+    }
+    let mut stream = TcpStream::connect(&hops[0].proxy).await?;
+    for (idx, hop) in hops.iter().enumerate() {
+        let next_target = if idx + 1 == hops.len() {
+            target.as_str()
+        } else {
+            hops[idx + 1].proxy.as_str()
+        };
+        match hop.kind {
+            ProxyType::Socks4 => socks4_handshake(&mut stream, next_target, false).await?,
+            ProxyType::Socks4a => socks4_handshake(&mut stream, next_target, true).await?,
+            ProxyType::Socks5 => {
+                socks5_handshake(&mut stream, next_target, hop.auth.clone()).await?
+            }
+            ProxyType::HttpProxy => {
+                http_proxy_handshake(&mut stream, next_target, hop.auth.clone()).await?
+            }
+        }
+    }
+    Ok(Box::new(stream))
+}
+
+async fn socks5_handshake(
+    stream: &mut TcpStream,
+    target: &str,
+    auth: Option<ProxyAuth>,
+) -> Result<(), SocoreError> {
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
     if auth.is_some() {
@@ -289,7 +316,7 @@ async fn open_socks5_connect(
         }
     }
 
-    let (host, port) = split_host_port(&target)?;
+    let (host, port) = split_host_port(target)?;
     let host_bytes = host.as_bytes();
     if host_bytes.len() > 255 {
         return Err(SocoreError::InvalidAddress(
@@ -333,15 +360,53 @@ async fn open_socks5_connect(
         }
     }
 
-    Ok(Box::new(stream))
+    Ok(())
 }
 
-async fn open_http_proxy_connect(
-    proxy: String,
-    target: String,
+async fn socks4_handshake(
+    stream: &mut TcpStream,
+    target: &str,
+    use_4a: bool,
+) -> Result<(), SocoreError> {
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+    let (host, port) = split_host_port(target)?;
+    let mut req = Vec::new();
+    req.push(0x04);
+    req.push(0x01);
+    req.extend_from_slice(&port.to_be_bytes());
+    if use_4a {
+        req.extend_from_slice(&[0, 0, 0, 1]);
+        req.push(0x00);
+        req.extend_from_slice(host.as_bytes());
+        req.push(0x00);
+    } else {
+        let ip = host.parse::<Ipv4Addr>().map_err(|_| {
+            SocoreError::InvalidAddress(
+                "SOCKS4 requires IPv4 target; use SOCKS4A for domain targets".to_string(),
+            )
+        })?;
+        req.extend_from_slice(&ip.octets());
+        req.push(0x00);
+    }
+
+    stream.write_all(&req).await?;
+    let mut resp = [0_u8; 8];
+    stream.read_exact(&mut resp).await?;
+    if resp[1] != 0x5a {
+        return Err(SocoreError::UnsupportedEndpoint(format!(
+            "socks4 connect failed with reply code {}",
+            resp[1]
+        )));
+    }
+    Ok(())
+}
+
+async fn http_proxy_handshake(
+    stream: &mut TcpStream,
+    target: &str,
     auth: Option<ProxyAuth>,
-) -> Result<Box<dyn IoStream>, SocoreError> {
-    let mut stream = TcpStream::connect(proxy).await?;
+) -> Result<(), SocoreError> {
     use base64::Engine;
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
@@ -379,7 +444,7 @@ async fn open_http_proxy_connect(
             resp_text.lines().next().unwrap_or("<empty response>")
         )));
     }
-    Ok(Box::new(stream))
+    Ok(())
 }
 
 async fn open_tls_connect(
@@ -733,9 +798,11 @@ mod tests {
     use std::time::Duration;
 
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
-    use tokio::net::TcpListener;
+    use tokio::net::{TcpListener, TcpStream};
 
-    use crate::spec::{EndpointOptions, EndpointSpec, ProxyAuth, RetryBackoff};
+    use crate::spec::{
+        EndpointOptions, EndpointSpec, ProxyAuth, ProxyHop, ProxyType, RetryBackoff,
+    };
 
     #[tokio::test]
     async fn udp_connect_roundtrip() {
@@ -992,6 +1059,86 @@ mod tests {
         })
         .await
         .expect("open http proxy auth");
+    }
+
+    #[tokio::test]
+    async fn proxy_chain_two_socks5_hops() {
+        let second = TcpListener::bind("127.0.0.1:0").await.expect("bind second");
+        let second_addr = second.local_addr().expect("second addr");
+        tokio::spawn(async move {
+            let (mut socket, _) = second.accept().await.expect("second accept");
+            let mut greet = [0_u8; 3];
+            socket.read_exact(&mut greet).await.expect("second greet");
+            socket
+                .write_all(&[0x05, 0x00])
+                .await
+                .expect("second method");
+
+            let mut head = [0_u8; 5];
+            socket.read_exact(&mut head).await.expect("second head");
+            let domain_len = usize::from(head[4]);
+            let mut rest = vec![0_u8; domain_len + 2];
+            socket.read_exact(&mut rest).await.expect("second rest");
+            socket
+                .write_all(&[0x05, 0x00, 0x00, 0x01, 127, 0, 0, 1, 0x1f, 0x90])
+                .await
+                .expect("second connect ok");
+            socket.write_all(b"pong").await.expect("second payload");
+        });
+
+        let first = TcpListener::bind("127.0.0.1:0").await.expect("bind first");
+        let first_addr = first.local_addr().expect("first addr");
+        tokio::spawn(async move {
+            let (mut downstream, _) = first.accept().await.expect("first accept");
+            let mut greet = [0_u8; 3];
+            downstream
+                .read_exact(&mut greet)
+                .await
+                .expect("first greet");
+            downstream
+                .write_all(&[0x05, 0x00])
+                .await
+                .expect("first method");
+
+            let mut head = [0_u8; 5];
+            downstream.read_exact(&mut head).await.expect("first head");
+            let domain_len = usize::from(head[4]);
+            let mut rest = vec![0_u8; domain_len + 2];
+            downstream.read_exact(&mut rest).await.expect("first rest");
+            let host = String::from_utf8(rest[..domain_len].to_vec()).expect("host");
+            let port = u16::from_be_bytes([rest[domain_len], rest[domain_len + 1]]);
+            let target = format!("{host}:{port}");
+            let mut upstream = TcpStream::connect(&target).await.expect("connect second");
+            downstream
+                .write_all(&[0x05, 0x00, 0x00, 0x01, 127, 0, 0, 1, 0x1f, 0x90])
+                .await
+                .expect("first connect ok");
+            tokio::io::copy_bidirectional(&mut downstream, &mut upstream)
+                .await
+                .expect("relay");
+        });
+
+        let mut stream = super::open(EndpointSpec::ProxyChain {
+            hops: vec![
+                ProxyHop {
+                    kind: ProxyType::Socks5,
+                    proxy: first_addr.to_string(),
+                    auth: None,
+                },
+                ProxyHop {
+                    kind: ProxyType::Socks5,
+                    proxy: second_addr.to_string(),
+                    auth: None,
+                },
+            ],
+            target: "example.com:443".to_string(),
+        })
+        .await
+        .expect("open proxy chain");
+
+        let mut out = [0_u8; 4];
+        stream.read_exact(&mut out).await.expect("read payload");
+        assert_eq!(&out, b"pong");
     }
 
     #[cfg(not(windows))]

@@ -53,6 +53,7 @@ socat link --from "tls://example.com:443?tls-verify=false&sni=alt.example.com" -
 socat link --profile prod --from tcp://example.com:443 --to stdio://
 socat tunnel --via socks5://127.0.0.1:1080 --to example.com:443
 socat tunnel --from stdio:// --via http-proxy://u:p@127.0.0.1:8080 --to api.example.com:443
+socat tunnel --via socks5://127.0.0.1:1080 --via http-proxy://127.0.0.1:8080 --to api.example.com:443
 
 # 计划/校验模式
 socat --json plan --from "TCP:127.0.0.1:9000,retry=2" --to STDIO

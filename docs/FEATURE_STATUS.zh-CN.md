@@ -24,6 +24,7 @@
   - `socat validate --from <addr> --to <addr>`
 - 隧道命令：
   - `socat tunnel --via <proxy-uri> --to <host:port> [--from stdio://]`
+  - 支持重复 `--via` 形成多跳代理链
 - 解释与清点：
   - `socat --json explain <address>`
   - `socat --json inventory`

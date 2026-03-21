@@ -9,6 +9,22 @@ pub struct ProxyAuth {
     pub password: String,
 }
 
+#[derive(Debug, Clone, Copy, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "kebab-case")]
+pub enum ProxyType {
+    Socks4,
+    Socks4a,
+    Socks5,
+    HttpProxy,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct ProxyHop {
+    pub kind: ProxyType,
+    pub proxy: String,
+    pub auth: Option<ProxyAuth>,
+}
+
 #[derive(Debug, Clone, Serialize, Default, PartialEq, Eq)]
 pub struct EndpointOptions {
     pub connect_timeout_ms: Option<u64>,
@@ -59,6 +75,10 @@ pub enum EndpointSpec {
         proxy: String,
         target: String,
         auth: Option<ProxyAuth>,
+    },
+    ProxyChain {
+        hops: Vec<ProxyHop>,
+        target: String,
     },
     Exec(String),
     System(String),
@@ -276,6 +296,30 @@ fn proxy_endpoint(
             auth,
         }),
     }
+}
+
+pub fn parse_proxy_hop_uri(input: &str) -> Result<ProxyHop, SocoreError> {
+    let url = url::Url::parse(input).map_err(|_| SocoreError::InvalidAddress(input.to_string()))?;
+    let host = url
+        .host_str()
+        .ok_or_else(|| SocoreError::InvalidAddress("missing proxy host".to_string()))?;
+    let port = url
+        .port_or_known_default()
+        .ok_or_else(|| SocoreError::InvalidAddress("missing proxy port".to_string()))?;
+    let proxy = format!("{host}:{port}");
+    let auth = proxy_auth_from_url(&url);
+    let kind = match url.scheme() {
+        "socks4" => ProxyType::Socks4,
+        "socks4a" => ProxyType::Socks4a,
+        "socks5" => ProxyType::Socks5,
+        "http-proxy" | "proxy" => ProxyType::HttpProxy,
+        other => {
+            return Err(SocoreError::InvalidAddress(format!(
+                "unsupported proxy scheme for tunnel hop: {other}"
+            )));
+        }
+    };
+    Ok(ProxyHop { kind, proxy, auth })
 }
 
 fn proxy_auth_from_url(url: &url::Url) -> Option<ProxyAuth> {
