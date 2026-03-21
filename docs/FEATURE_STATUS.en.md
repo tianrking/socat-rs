@@ -19,6 +19,9 @@ Core principles:
 - Two command styles:
   - legacy: `socat <ADDR1> <ADDR2>`
   - simple: `socat link --from <uri> --to <uri>`
+- Planning and validation commands:
+  - `socat plan --from <addr> --to <addr>`
+  - `socat validate --from <addr> --to <addr>`
 - Introspection commands:
   - `socat --json explain <address>`
   - `socat --json inventory`
@@ -27,6 +30,11 @@ Core principles:
   - `connect-timeout` (ms / `s` / `ms`)
   - `retry`
   - `retry-delay` (ms / `s` / `ms`)
+- Built-in profile presets:
+  - `dev`
+  - `prod`
+  - `lan`
+  - `wan`
 
 ### 2.2 Endpoint Capabilities Available
 

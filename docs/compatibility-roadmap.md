@@ -17,6 +17,9 @@ Implemented now:
   - `connect-timeout`
   - `retry`
   - `retry-delay`
+- Friendly CLI planning path:
+  - `plan` and `validate` commands with JSON output
+  - built-in `dev/prod/lan/wan` profile defaults
 
 ## Phase 1: Transport completeness
 

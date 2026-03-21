@@ -15,6 +15,8 @@ This repository already includes:
 - Cross-platform async core (`tokio`) for Linux/macOS/Windows
 - Legacy input path: `socat <ADDR1> <ADDR2>`
 - Simpler path: `socat link --from <URI> --to <URI>`
+- Planning path: `socat plan --from <ADDR> --to <ADDR>`
+- Validation path: `socat validate --from <ADDR> --to <ADDR>`
 - CI for Linux/macOS/Windows
 - Legacy inventory extraction script from upstream `socat` source
 
@@ -44,6 +46,11 @@ Current implemented endpoint families:
   - `connect-timeout`
   - `retry`
   - `retry-delay`
+- built-in profiles:
+  - `dev`
+  - `prod`
+  - `lan`
+  - `wan`
 
 ## Why two command styles
 
@@ -61,6 +68,7 @@ socat link --from tcp-listen://0.0.0.0:8080 --to stdio://
 socat link --from stdio:// --to tcp://127.0.0.1:8080
 socat link --from npipe://./pipe/socat-rs --to tcp://127.0.0.1:9000
 socat link --from "tcp://127.0.0.1:9000?connect-timeout=2s&retry=3&retry-delay=500ms" --to stdio://
+socat link --profile prod --from tcp://example.com:443 --to stdio://
 ```
 
 ## AI-friendly workflow
@@ -69,6 +77,8 @@ Use `--dry-run` and `--json` to make planning deterministic:
 
 ```bash
 socat --dry-run --json link --from tcp://127.0.0.1:80 --to stdio://
+socat --json plan --from "TCP:127.0.0.1:9000,retry=2" --to STDIO
+socat --json validate --profile wan --from tcp://api.example.com:443 --to stdio://
 socat --json explain "TCP-LISTEN:8080"
 socat --json explain "TCP:127.0.0.1:9000,connect-timeout=2000,retry=3,retry-delay=500ms"
 socat --json inventory

@@ -19,6 +19,9 @@
 - 双语法模式：
   - legacy: `socat <ADDR1> <ADDR2>`
   - simple: `socat link --from <uri> --to <uri>`
+- 计划与校验命令：
+  - `socat plan --from <addr> --to <addr>`
+  - `socat validate --from <addr> --to <addr>`
 - 解释与清点：
   - `socat --json explain <address>`
   - `socat --json inventory`
@@ -27,6 +30,11 @@
   - `connect-timeout`（支持 ms / s 后缀）
   - `retry`
   - `retry-delay`（支持 ms / s 后缀）
+- 内置 profile 预设：
+  - `dev`
+  - `prod`
+  - `lan`
+  - `wan`
 
 ### 2.2 端点能力（已可用）
 

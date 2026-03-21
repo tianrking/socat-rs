@@ -26,6 +26,11 @@
   - `connect-timeout`
   - `retry`
   - `retry-delay`
+- 内置 profile：
+  - `dev`
+  - `prod`
+  - `lan`
+  - `wan`
 
 ## 常用命令
 
@@ -37,6 +42,11 @@ socat TCP-LISTEN:8080 STDIO
 socat link --from tcp-listen://0.0.0.0:8080 --to stdio://
 socat link --from npipe://./pipe/socat-rs --to tcp://127.0.0.1:9000
 socat link --from "tcp://127.0.0.1:9000?connect-timeout=2s&retry=3&retry-delay=500ms" --to stdio://
+socat link --profile prod --from tcp://example.com:443 --to stdio://
+
+# 计划/校验模式
+socat --json plan --from "TCP:127.0.0.1:9000,retry=2" --to STDIO
+socat --json validate --profile wan --from tcp://api.example.com:443 --to stdio://
 
 # 机器可读清单
 socat --json inventory
