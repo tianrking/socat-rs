@@ -22,6 +22,8 @@ Core principles:
 - Planning and validation commands:
   - `socat plan --from <addr> --to <addr>`
   - `socat validate --from <addr> --to <addr>`
+- Connectivity check command:
+  - `socat check <address>`
 - Tunnel command:
   - `socat tunnel --via <proxy-uri> --to <host:port> [--from stdio://]`
   - supports multi-hop chains with repeated `--via`
@@ -43,6 +45,7 @@ Core principles:
   - `lan`
   - `wan`
 - JSON run-report for executed link operations
+- Optional JSON run-report file output (`--report-file`)
 - Prometheus metrics endpoint via `--metrics-bind`
 
 ### 2.2 Endpoint Capabilities Available

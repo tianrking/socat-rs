@@ -28,7 +28,9 @@ Implemented now:
   - multi-hop proxy chains via repeated `--via`
 - Observability baseline:
   - JSON run-report on executed links
+  - optional JSON run-report file output
   - Prometheus metrics endpoint (`--metrics-bind`)
+  - `check` command for endpoint connectivity probe
 
 ## Phase 1: Transport completeness
 

@@ -22,6 +22,8 @@
 - 计划与校验命令：
   - `socat plan --from <addr> --to <addr>`
   - `socat validate --from <addr> --to <addr>`
+- 连通性检查命令：
+  - `socat check <address>`
 - 隧道命令：
   - `socat tunnel --via <proxy-uri> --to <host:port> [--from stdio://]`
   - 支持重复 `--via` 形成多跳代理链
@@ -43,6 +45,7 @@
   - `lan`
   - `wan`
 - link 实际执行后可输出 JSON 运行报告（run-report）
+- 支持将 JSON 运行报告写入文件（`--report-file`）
 - 支持 `--metrics-bind` 暴露 Prometheus 指标
 
 ### 2.2 端点能力（已可用）

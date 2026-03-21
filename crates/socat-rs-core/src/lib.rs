@@ -33,6 +33,8 @@ struct Cli {
         help = "Expose Prometheus metrics on host:port (e.g. 0.0.0.0:9464)"
     )]
     metrics_bind: Option<String>,
+    #[arg(global = true, long, help = "Write JSON run report to file path")]
+    report_file: Option<String>,
     #[command(subcommand)]
     command: Option<Command>,
     #[arg(value_name = "ADDRESS", num_args = 0..=2)]
@@ -45,6 +47,7 @@ enum Command {
     Tunnel(TunnelArgs),
     Plan(LinkArgs),
     Validate(LinkArgs),
+    Check { address: String },
     Explain { address: String },
     Inventory,
 }
@@ -84,6 +87,15 @@ struct RunReport {
     to: EndpointPlan,
     stats: relay::RelayStats,
     duration_ms: u128,
+}
+
+#[derive(Debug, Serialize)]
+struct CheckReport {
+    profile: Option<String>,
+    plan: EndpointPlan,
+    ok: bool,
+    latency_ms: u128,
+    error: Option<String>,
 }
 
 #[derive(Debug, Clone, Copy, ValueEnum)]
@@ -180,6 +192,10 @@ async fn dispatch(cli: Cli) -> Result<(), SocoreError> {
             emit(cli.json, &plan)?;
             Ok(())
         }
+        (Some(Command::Check { address }), _) => {
+            let plan = apply_profile(parse_endpoint_plan(&address)?, profile);
+            run_check(plan, profile, cli.json).await
+        }
         (Some(Command::Plan(args)), _) | (Some(Command::Validate(args)), _) => {
             let left = apply_profile(parse_endpoint_plan(&args.from)?, profile);
             let right = apply_profile(parse_endpoint_plan(&args.to)?, profile);
@@ -207,7 +223,15 @@ async fn dispatch(cli: Cli) -> Result<(), SocoreError> {
                 emit(cli.json, &out)?;
                 return Ok(());
             }
-            run_link_and_maybe_emit_report("simple", profile, left, right, cli.json).await
+            run_link_and_maybe_emit_report(
+                "simple",
+                profile,
+                left,
+                right,
+                cli.json,
+                cli.report_file.as_deref(),
+            )
+            .await
         }
         (Some(Command::Tunnel(args)), _) => {
             let left = apply_profile(parse_endpoint_plan(&args.from)?, profile);
@@ -230,7 +254,15 @@ async fn dispatch(cli: Cli) -> Result<(), SocoreError> {
                 emit(cli.json, &out)?;
                 return Ok(());
             }
-            run_link_and_maybe_emit_report("tunnel", profile, left, right, cli.json).await
+            run_link_and_maybe_emit_report(
+                "tunnel",
+                profile,
+                left,
+                right,
+                cli.json,
+                cli.report_file.as_deref(),
+            )
+            .await
         }
         (None, [left, right]) => {
             let left = apply_profile(spec::parse_legacy_with_options(left)?, profile);
@@ -246,7 +278,15 @@ async fn dispatch(cli: Cli) -> Result<(), SocoreError> {
                 emit(cli.json, &out)?;
                 return Ok(());
             }
-            run_link_and_maybe_emit_report("legacy", profile, left, right, cli.json).await
+            run_link_and_maybe_emit_report(
+                "legacy",
+                profile,
+                left,
+                right,
+                cli.json,
+                cli.report_file.as_deref(),
+            )
+            .await
         }
         _ => Err(SocoreError::InvalidAddress(
             "expected either: `socat <addr1> <addr2>` or `socat link --from ... --to ...`"
@@ -391,6 +431,7 @@ async fn run_link_and_maybe_emit_report(
     left: EndpointPlan,
     right: EndpointPlan,
     json: bool,
+    report_file: Option<&str>,
 ) -> Result<(), SocoreError> {
     metrics::record_connection_start();
     let started = Instant::now();
@@ -407,6 +448,9 @@ async fn run_link_and_maybe_emit_report(
                     duration_ms: started.elapsed().as_millis(),
                 };
                 emit(true, &report)?;
+                if let Some(path) = report_file {
+                    write_json_file(path, &report)?;
+                }
             }
             Ok(())
         }
@@ -415,6 +459,41 @@ async fn run_link_and_maybe_emit_report(
             Err(err)
         }
     }
+}
+
+async fn run_check(
+    plan: EndpointPlan,
+    profile: Option<ProfilePreset>,
+    json: bool,
+) -> Result<(), SocoreError> {
+    let started = Instant::now();
+    let result = endpoint::open_with_options(plan.endpoint.clone(), &plan.options).await;
+    let report = match result {
+        Ok(_) => CheckReport {
+            profile: profile.map(|p| p.as_str().to_string()),
+            plan,
+            ok: true,
+            latency_ms: started.elapsed().as_millis(),
+            error: None,
+        },
+        Err(err) => CheckReport {
+            profile: profile.map(|p| p.as_str().to_string()),
+            plan,
+            ok: false,
+            latency_ms: started.elapsed().as_millis(),
+            error: Some(err.to_string()),
+        },
+    };
+    emit(json, &report)?;
+    Ok(())
+}
+
+fn write_json_file<T: Serialize>(path: &str, value: &T) -> Result<(), SocoreError> {
+    let txt = serde_json::to_string_pretty(value)
+        .map_err(|e| SocoreError::InvalidAddress(format!("failed to encode report json: {e}")))?;
+    std::fs::write(path, txt)
+        .map_err(|e| SocoreError::InvalidAddress(format!("failed to write report file: {e}")))?;
+    Ok(())
 }
 
 #[cfg(test)]
@@ -475,5 +554,16 @@ mod tests {
         assert!(
             matches!(endpoint, EndpointSpec::ProxyChain { hops, target } if hops.len() == 2 && target == "example.com:443")
         );
+    }
+
+    #[test]
+    fn write_json_file_works() {
+        let mut out = std::env::temp_dir();
+        out.push(format!("socat-rs-report-{}.json", std::process::id()));
+        let payload = serde_json::json!({ "ok": true });
+        super::write_json_file(out.to_str().expect("path str"), &payload).expect("write file");
+        let text = std::fs::read_to_string(&out).expect("read");
+        assert!(text.contains("\"ok\": true"));
+        let _ = std::fs::remove_file(out);
     }
 }

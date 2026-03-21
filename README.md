@@ -18,6 +18,7 @@ This repository already includes:
 - Planning path: `socat plan --from <ADDR> --to <ADDR>`
 - Validation path: `socat validate --from <ADDR> --to <ADDR>`
 - Tunnel path: `socat tunnel --via <proxy-uri> --to <host:port> [--from stdio://]`
+- Check path: `socat check <address>`
 - CI for Linux/macOS/Windows
 - Legacy inventory extraction script from upstream `socat` source
 
@@ -57,6 +58,7 @@ Current implemented endpoint families:
   - `lan`
   - `wan`
 - run-report JSON for executed links (`--json`)
+- JSON report file output: `--report-file <path>`
 - Prometheus metrics endpoint: `--metrics-bind <host:port>`
 
 ## Why two command styles
@@ -91,10 +93,12 @@ Use `--dry-run` and `--json` to make planning deterministic:
 socat --dry-run --json link --from tcp://127.0.0.1:80 --to stdio://
 socat --json plan --from "TCP:127.0.0.1:9000,retry=2" --to STDIO
 socat --json validate --profile wan --from tcp://api.example.com:443 --to stdio://
+socat --json check "tcp://127.0.0.1:8080?connect-timeout=1s"
 socat --json explain "TCP-LISTEN:8080"
 socat --json explain "TCP:127.0.0.1:9000,connect-timeout=2000,retry=3,retry-delay=500ms"
 socat --json inventory
 socat --json --metrics-bind 0.0.0.0:9464 link --from tcp://127.0.0.1:9000 --to stdio://
+socat --json --report-file ./run-report.json link --from tcp://127.0.0.1:9000 --to stdio://
 ```
 
 ## Architecture
