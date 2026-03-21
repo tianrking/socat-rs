@@ -126,6 +126,8 @@ See:
 - `docs/FEATURE_STATUS.en.md`
 - `docs/V1_READY.en.md`
 - `docs/V1_READY.zh-CN.md`
+- `docs/ALL_FEATURES.en.md`
+- `docs/ALL_FEATURES.zh-CN.md`
 - `README.zh-CN.md`
 
 ## Build
