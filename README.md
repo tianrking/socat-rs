@@ -19,6 +19,8 @@ This repository already includes:
 - Validation path: `socat validate --from <ADDR> --to <ADDR>`
 - Tunnel path: `socat tunnel --via <proxy-uri> --to <host:port> [--from stdio://]`
 - Check path: `socat check <address>`
+- Doctor path: `socat doctor`
+- Agent JSON input path: `socat run --input-json <file-or->`
 - CI for Linux/macOS/Windows
 - Legacy inventory extraction script from upstream `socat` source
 
@@ -101,6 +103,60 @@ socat --json --metrics-bind 0.0.0.0:9464 link --from tcp://127.0.0.1:9000 --to s
 socat --json --report-file ./run-report.json link --from tcp://127.0.0.1:9000 --to stdio://
 ```
 
+### Unified JSON Protocol (for AI agents)
+
+When `--json` is enabled, every command returns one stable envelope:
+
+- `schema_version`
+- `ok`
+- `command`
+- `input`
+- `plan`
+- `result`
+- `error`
+- `next_actions`
+- `version`
+- `timestamp`
+
+Stable error codes now include:
+
+- `E_ADDR_PARSE`
+- `E_CONNECT_TIMEOUT`
+- `E_TLS_ENV`
+- `E_PROXY_AUTH`
+
+`plan` now includes:
+
+- `normalized_endpoints`
+- `executable_command`
+
+### JSON Input Mode
+
+Use structured JSON input for agent-safe invocation:
+
+```bash
+cat <<'JSON' | socat run --input-json -
+{
+  "mode": "plan",
+  "from": "tcp://127.0.0.1:8080",
+  "to": "stdio://",
+  "json": true
+}
+JSON
+```
+
+Supported `mode` values in JSON input:
+
+- `link`
+- `tunnel`
+- `plan`
+- `validate`
+- `check`
+- `explain`
+- `inventory`
+- `doctor`
+- `legacy`
+
 ## Architecture
 
 - `src/main.rs`: binary entrypoint, command name remains `socat`
@@ -135,7 +191,8 @@ See:
 ```bash
 cargo build
 cargo test
-cargo run -- --help
+cargo run --bin socat -- --help
+cargo test --test json_protocol_smoke
 ```
 
 Quick environment check:

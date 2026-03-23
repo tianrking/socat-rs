@@ -14,6 +14,7 @@
   - `socat doctor`
   - `socat --json doctor`
 - `doctor` reports runtime platform information, socket capability hints, TLS listener env readiness, and recommended release targets.
+- Added `run --input-json <path|->` for structured machine input.
 
 ### Cross-platform Packaging
 - Added reusable packaging script: `scripts/package-artifact.sh`
@@ -30,3 +31,17 @@
   - `doctor` usage
   - local packaging flow
   - CI target matrix overview
+  - unified JSON protocol and input-json mode
+
+### AI/JSON Protocol
+- Unified `--json` output envelope across commands:
+  - `schema_version`, `ok`, `command`, `input`, `plan`, `result`, `error`, `next_actions`, `version`, `timestamp`
+- Added stable error codes:
+  - `E_ADDR_PARSE`
+  - `E_CONNECT_TIMEOUT`
+  - `E_TLS_ENV`
+  - `E_PROXY_AUTH`
+- Added `plan.executable_command` and `plan.normalized_endpoints`.
+- Added JSON protocol smoke tests and CI check:
+  - `tests/json_protocol_smoke.rs`
+  - `.github/workflows/ci.yml` step: `JSON schema smoke check`

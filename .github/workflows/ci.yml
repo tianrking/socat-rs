@@ -25,5 +25,7 @@ jobs:
         run: cargo clippy --workspace --all-targets -- -D warnings
       - name: Test
         run: cargo test --workspace --all-targets
+      - name: JSON schema smoke check
+        run: cargo test --test json_protocol_smoke
       - name: Build release
         run: cargo build --workspace --release

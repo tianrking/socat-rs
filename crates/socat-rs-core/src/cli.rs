@@ -1,8 +1,9 @@
 use clap::{Args, Parser, Subcommand, ValueEnum};
+use serde::{Deserialize, Serialize};
 
 use crate::spec::{EndpointOptions, RetryBackoff};
 
-#[derive(Debug, Parser)]
+#[derive(Debug, Parser, Clone)]
 #[command(name = "socat")]
 #[command(about = "Modern socat rewrite: compatibility path + simple path")]
 pub(crate) struct Cli {
@@ -31,19 +32,20 @@ pub(crate) struct Cli {
     pub(crate) legacy: Vec<String>,
 }
 
-#[derive(Debug, Subcommand)]
+#[derive(Debug, Subcommand, Clone)]
 pub(crate) enum Command {
     Link(LinkArgs),
     Tunnel(TunnelArgs),
     Plan(LinkArgs),
     Validate(LinkArgs),
+    Run(RunArgs),
     Check { address: String },
     Explain { address: String },
     Inventory,
     Doctor,
 }
 
-#[derive(Debug, Args)]
+#[derive(Debug, Args, Clone)]
 pub(crate) struct LinkArgs {
     #[arg(long)]
     pub(crate) from: String,
@@ -51,7 +53,7 @@ pub(crate) struct LinkArgs {
     pub(crate) to: String,
 }
 
-#[derive(Debug, Args)]
+#[derive(Debug, Args, Clone)]
 pub(crate) struct TunnelArgs {
     #[arg(long, default_value = "stdio://")]
     pub(crate) from: String,
@@ -61,7 +63,18 @@ pub(crate) struct TunnelArgs {
     pub(crate) to: String,
 }
 
-#[derive(Debug, Clone, Copy, ValueEnum)]
+#[derive(Debug, Args, Clone)]
+pub(crate) struct RunArgs {
+    #[arg(
+        long,
+        default_value = "-",
+        help = "JSON input path; use '-' to read JSON from stdin"
+    )]
+    pub(crate) input_json: String,
+}
+
+#[derive(Debug, Clone, Copy, ValueEnum, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
 pub(crate) enum ProfilePreset {
     Dev,
     Prod,

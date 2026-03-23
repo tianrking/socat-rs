@@ -38,6 +38,8 @@
 - 运行态 `--json` 会输出 link 执行报告（run-report）
 - 可将 JSON 运行报告写入文件：`--report-file <path>`
 - Prometheus 指标端点：`--metrics-bind <host:port>`
+- 运行环境自检：`socat doctor`
+- 面向 Agent 的 JSON 输入：`socat run --input-json <文件或->`
 
 ## 常用命令
 
@@ -68,6 +70,60 @@ socat --json --metrics-bind 0.0.0.0:9464 link --from tcp://127.0.0.1:9000 --to s
 socat --json --report-file ./run-report.json link --from tcp://127.0.0.1:9000 --to stdio://
 ```
 
+## AI / Agent 统一 JSON 协议
+
+开启 `--json` 后，所有命令统一返回以下结构：
+
+- `schema_version`
+- `ok`
+- `command`
+- `input`
+- `plan`
+- `result`
+- `error`
+- `next_actions`
+- `version`
+- `timestamp`
+
+稳定错误码（可直接用于 Agent 分支逻辑）：
+
+- `E_ADDR_PARSE`
+- `E_CONNECT_TIMEOUT`
+- `E_TLS_ENV`
+- `E_PROXY_AUTH`
+
+`plan` 字段中会包含：
+
+- `normalized_endpoints`
+- `executable_command`
+
+## JSON 输入模式（Agent 推荐）
+
+支持结构化输入，避免命令拼接错误：
+
+```bash
+cat <<'JSON' | socat run --input-json -
+{
+  "mode": "plan",
+  "from": "tcp://127.0.0.1:8080",
+  "to": "stdio://",
+  "json": true
+}
+JSON
+```
+
+`mode` 支持：
+
+- `link`
+- `tunnel`
+- `plan`
+- `validate`
+- `check`
+- `explain`
+- `inventory`
+- `doctor`
+- `legacy`
+
 ## 文档
 
 - 英文总览：`README.md`
@@ -91,7 +147,8 @@ socat --json --report-file ./run-report.json link --from tcp://127.0.0.1:9000 --
 ```bash
 cargo check
 cargo test --workspace
-cargo run -- --help
+cargo run --bin socat -- --help
+cargo test --test json_protocol_smoke
 ```
 
 快速环境自检：
