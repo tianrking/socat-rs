@@ -93,3 +93,26 @@ cargo check
 cargo test --workspace
 cargo run -- --help
 ```
+
+快速环境自检：
+
+```bash
+cargo run --bin socat -- doctor
+cargo run --bin socat -- --json doctor
+```
+
+## 跨平台打包（x86_64 + arm）
+
+本地打包示例（先完成目标平台编译）：
+
+```bash
+rustup target add x86_64-unknown-linux-gnu
+cargo build --release --workspace --target x86_64-unknown-linux-gnu
+PACKAGE_VERSION=local ./scripts/package-artifact.sh x86_64-unknown-linux-gnu
+```
+
+CI 发布工作流（`.github/workflows/release.yml`）会自动构建并打包：
+
+- Ubuntu: `x86_64-unknown-linux-gnu`, `aarch64-unknown-linux-gnu`
+- Windows: `x86_64-pc-windows-msvc`, `aarch64-pc-windows-msvc`
+- macOS: `x86_64-apple-darwin`, `aarch64-apple-darwin`

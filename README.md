@@ -138,6 +138,29 @@ cargo test
 cargo run -- --help
 ```
 
+Quick environment check:
+
+```bash
+cargo run --bin socat -- doctor
+cargo run --bin socat -- --json doctor
+```
+
+## Release Packages (x86_64 + arm)
+
+Local package creation (after building a target):
+
+```bash
+rustup target add x86_64-unknown-linux-gnu
+cargo build --release --workspace --target x86_64-unknown-linux-gnu
+PACKAGE_VERSION=local ./scripts/package-artifact.sh x86_64-unknown-linux-gnu
+```
+
+CI release workflow (`.github/workflows/release.yml`) builds and packages:
+
+- Ubuntu: `x86_64-unknown-linux-gnu`, `aarch64-unknown-linux-gnu`
+- Windows: `x86_64-pc-windows-msvc`, `aarch64-pc-windows-msvc`
+- macOS: `x86_64-apple-darwin`, `aarch64-apple-darwin`
+
 ## Legacy inventory extraction
 
 Given upstream source at `../socat`:

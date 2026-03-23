@@ -1,4 +1,4 @@
 [package]
 name = "socat-rs-compat"
-version = "0.1.0"
+version = "0.0.1"
 edition = "2024"
